@@ -1,5 +1,5 @@
 /**
- * Capture README screenshots of Arjuga Reels Maker.
+ * Capture README screenshots of Reals Maker.
  *
  * Prereq: frontend at http://localhost:5173
  * Output: docs/screenshots/*.png

@@ -1,4 +1,4 @@
-# Arjuga Reels Maker
+# Reals Maker
 
 Local video studio for Reels, Shorts, and YouTube clips. Merge, split, make
 music videos, find viral scenes, and download from a URL — all from one dark UI.
@@ -237,4 +237,5 @@ Writes `docs/screenshots/01-merge.png` … `05-downloader.png`.
 - Node and Python wipe old exports on boot and reuse fixed filenames.
 - Jobs live in memory. Use a queue if you run more than one Node process.
 - Cover box is drawn by you on the preview. It is not a 4-corner-only delogo picker.
+# reels-maker
 # reels-maker

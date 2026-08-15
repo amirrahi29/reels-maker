@@ -1,4 +1,4 @@
-# Arjuga Reels Maker — Python backend
+# Reals Maker — Python backend
 
 URL download (yt-dlp) and transcription run here.
 

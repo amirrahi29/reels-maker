@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const STATUS_POLL_MS = 1000;
@@ -186,6 +186,14 @@ const TABS = [
     desc: "Join clips into one master export with watermark and brand controls.",
   },
   {
+    id: "duet",
+    label: "Duet Videos",
+    hint: "Stack two clips, portrait",
+    kicker: "Create",
+    title: "Duet Videos",
+    desc: "Upload two clips — one on top, one below — then export a portrait duet. Mute either track or drop in your own sound.",
+  },
+  {
     id: "split",
     label: "Split Video",
     hint: "Cut into the parts you choose",
@@ -260,6 +268,30 @@ function NavIcon({ id }) {
           strokeWidth="1.6"
           strokeLinecap="round"
           strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  if (id === "duet") {
+    return (
+      <svg {...common}>
+        <rect
+          x="6"
+          y="3.5"
+          width="12"
+          height="7.5"
+          rx="1.4"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        />
+        <rect
+          x="6"
+          y="13"
+          width="12"
+          height="7.5"
+          rx="1.4"
+          stroke="currentColor"
+          strokeWidth="1.6"
         />
       </svg>
     );
@@ -797,7 +829,7 @@ function MergeTab() {
   const [coverImage, setCoverImage] = useState(null);
   const [layout, setLayout] = useState("auto");
   const [addFloatingText, setAddFloatingText] = useState(false);
-  const [brandText, setBrandText] = useState("Arjuga");
+  const [brandText, setBrandText] = useState("Reals Maker");
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const fileInputRef = useRef(null);
   const coverImageRef = useRef(null);
@@ -1221,7 +1253,7 @@ function MergeTab() {
                   id="brandText"
                   type="text"
                   className="brand-input"
-                  placeholder="Arjuga"
+                  placeholder="Reals Maker"
                   value={brandText}
                   onChange={(e) => setBrandText(e.target.value)}
                   disabled={merging}
@@ -2495,6 +2527,1432 @@ function MusicTab() {
   );
 }
 
+function isVideoFile(file) {
+  return (
+    file.type.startsWith("video/") ||
+    /\.(mp4|m4v|mov|mkv|webm|avi|3gp|ogv|ts|flv|wmv)$/i.test(file.name)
+  );
+}
+
+function isAudioTrack(file) {
+  return (
+    file.type.startsWith("audio/") ||
+    /\.(mp3|m4a|aac|wav|ogg|flac|wma)$/i.test(file.name)
+  );
+}
+
+function fileToMediaItem(file) {
+  return {
+    id: `${file.name}-${file.size}-${file.lastModified}-${Math.random()
+      .toString(36)
+      .slice(2, 7)}`,
+    file,
+    url: URL.createObjectURL(file),
+  };
+}
+
+const DUET_FONTS = [
+  { id: "jakarta", label: "Modern", family: '"Plus Jakarta Sans", sans-serif' },
+  { id: "bebas", label: "Bold", family: '"Bebas Neue", sans-serif' },
+  { id: "playfair", label: "Elegant", family: '"Playfair Display", serif' },
+  { id: "pacifico", label: "Script", family: '"Pacifico", cursive' },
+  { id: "oswald", label: "Poster", family: '"Oswald", sans-serif' },
+  { id: "mono", label: "Mono", family: '"Roboto Mono", monospace' },
+  { id: "comic", label: "Fun", family: '"Comic Neue", cursive' },
+  { id: "merri", label: "Serif", family: '"Merriweather", serif' },
+];
+
+const DUET_LAYOUTS = [
+  { id: "split", title: "Split", hint: "Drag the line" },
+  { id: "circle", title: "Circle", hint: "Full + pip" },
+];
+
+const DUET_SPLIT_MIN = 22;
+const DUET_SPLIT_MAX = 78;
+const DUET_FRAME_W = 1080;
+const DUET_FRAME_H = 1920;
+const DUET_BAR_PX = 4;
+
+function clampDuetSplit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 50;
+  return Math.max(DUET_SPLIT_MIN, Math.min(DUET_SPLIT_MAX, n));
+}
+
+function duetSplitLayout(splitTopPercent) {
+  const usable = DUET_FRAME_H - DUET_BAR_PX;
+  const pct = clampDuetSplit(splitTopPercent);
+  let topH = Math.round((usable * pct) / 100);
+  topH = Math.max(2, Math.min(usable - 2, topH));
+  if (topH % 2) topH += topH + 1 <= usable - 2 ? 1 : -1;
+  const botH = usable - topH;
+  return {
+    topH,
+    botH,
+    topPct: (topH / DUET_FRAME_H) * 100,
+    barPct: (DUET_BAR_PX / DUET_FRAME_H) * 100,
+    botPct: (botH / DUET_FRAME_H) * 100,
+  };
+}
+
+function splitTopFromStageY(clientY, rect) {
+  if (!rect?.height) return 50;
+  const y = ((clientY - rect.top) / rect.height) * DUET_FRAME_H;
+  const usable = DUET_FRAME_H - DUET_BAR_PX;
+  const topH = Math.max(2, Math.min(usable - 2, y - DUET_BAR_PX / 2));
+  return clampDuetSplit((topH / usable) * 100);
+}
+
+const DUET_PIP_CORNERS = [
+  { id: "tl", label: "Top left", x: 18, y: 11 },
+  { id: "tr", label: "Top right", x: 82, y: 11 },
+  { id: "bl", label: "Bottom left", x: 18, y: 89 },
+  { id: "br", label: "Bottom right", x: 82, y: 89 },
+];
+
+const DUET_EMOJIS = [
+  "😀", "😂", "🤣", "😍", "😘", "😎", "🤩", "🥳", "😇", "🤗",
+  "😏", "😜", "🤪", "😭", "😡", "🔥", "❤️", "💕", "💯", "✨",
+  "⭐", "🎉", "👏", "🙌", "👍", "🙏", "💪", "👀", "🎶", "🎵",
+  "🎬", "📸", "🌈", "☀️", "🌙", "⚡", "💥", "🌸", "🌹", "🦋",
+  "👑", "💎", "🏆", "🎯", "📌", "💬", "📍", "🇮🇳", "✌️", "🤝",
+];
+
+function duetFontFamily(id) {
+  return (DUET_FONTS.find((f) => f.id === id) || DUET_FONTS[0]).family;
+}
+
+function defaultDuetOverlay() {
+  return {
+    text: "",
+    textColor: "#ffffff",
+    bgColor: "#111111",
+    bgTransparent: false,
+    fontSize: 28,
+    font: "jakarta",
+    x: 50,
+    y: 50,
+  };
+}
+
+async function renderDuetCaptionPng(overlay) {
+  const text = overlay.text.trim();
+  if (!text) return null;
+  try {
+    await document.fonts.ready;
+  } catch {
+    // continue with fallback fonts
+  }
+  const family = duetFontFamily(overlay.font);
+  const size = Math.max(24, Math.round(overlay.fontSize * 1.05));
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  ctx.font = `800 ${size}px ${family}`;
+  const width = ctx.measureText(text).width;
+  const padX = Math.round(size * 0.55);
+  const padY = Math.round(size * 0.32);
+  canvas.width = Math.max(8, Math.ceil(width + padX * 2));
+  canvas.height = Math.max(8, Math.ceil(size * 1.4 + padY * 2));
+  const draw = canvas.getContext("2d");
+  draw.font = `800 ${size}px ${family}`;
+  draw.textAlign = "center";
+  draw.textBaseline = "middle";
+  if (!overlay.bgTransparent) {
+    draw.fillStyle = hexToRgba(overlay.bgColor, 0.88);
+    const r = Math.max(6, Math.round(size * 0.22));
+    const w = canvas.width;
+    const h = canvas.height;
+    draw.beginPath();
+    draw.moveTo(r, 0);
+    draw.arcTo(w, 0, w, h, r);
+    draw.arcTo(w, h, 0, h, r);
+    draw.arcTo(0, h, 0, 0, r);
+    draw.arcTo(0, 0, w, 0, r);
+    draw.closePath();
+    draw.fill();
+  }
+  draw.fillStyle = overlay.textColor || "#ffffff";
+  draw.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
+  const blob = await new Promise((resolve) =>
+    canvas.toBlob(resolve, "image/png")
+  );
+  if (!blob) return null;
+  return new File([blob], "duet-caption.png", { type: "image/png" });
+}
+
+function DuetTextFields({ overlay, setOverlay, disabled }) {
+  const inputRef = useRef(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+
+  function patch(next) {
+    setOverlay((prev) => ({ ...prev, ...next }));
+  }
+
+  function insertEmoji(emoji) {
+    const el = inputRef.current;
+    const value = overlay.text || "";
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? start;
+    const next = `${value.slice(0, start)}${emoji}${value.slice(end)}`.slice(
+      0,
+      120
+    );
+    patch({ text: next });
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      const pos = Math.min(next.length, start + emoji.length);
+      el.setSelectionRange(pos, pos);
+    });
+  }
+
+  return (
+    <div className="duet-text-tools">
+      <div className="brand-field">
+        <label className="field-label" htmlFor="duetOverlayText">
+          On-video text
+        </label>
+        <div className="duet-text-input-row">
+          <input
+            ref={inputRef}
+            id="duetOverlayText"
+            className="brand-input"
+            type="text"
+            maxLength={120}
+            placeholder="Type here, pick a font, add emoji, then drag"
+            value={overlay.text}
+            onChange={(e) => patch({ text: e.target.value })}
+            disabled={disabled}
+            style={{ fontFamily: duetFontFamily(overlay.font) }}
+          />
+          <button
+            type="button"
+            className={`btn btn-ghost duet-emoji-toggle${
+              emojiOpen ? " duet-emoji-toggle--on" : ""
+            }`}
+            onClick={() => setEmojiOpen((v) => !v)}
+            disabled={disabled}
+            aria-expanded={emojiOpen}
+            aria-label="Emoji picker"
+          >
+            😊
+          </button>
+        </div>
+      </div>
+      {emojiOpen && (
+        <div className="duet-emoji-grid" role="listbox" aria-label="Emojis">
+          {DUET_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              className="duet-emoji-btn"
+              onClick={() => insertEmoji(emoji)}
+              disabled={disabled}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="cover-color-field">
+        <span className="field-label">Font style</span>
+        <div className="duet-font-grid" role="radiogroup" aria-label="Font style">
+          {DUET_FONTS.map((font) => (
+            <button
+              key={font.id}
+              type="button"
+              className={`speed-btn duet-font-btn${
+                overlay.font === font.id ? " speed-btn--active" : ""
+              }`}
+              style={{ fontFamily: font.family }}
+              onClick={() => patch({ font: font.id })}
+              disabled={disabled}
+              role="radio"
+              aria-checked={overlay.font === font.id}
+            >
+              {font.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="cover-style-row">
+        <label className="cover-color-field">
+          <span className="field-label">Text color</span>
+          <span className="cover-color-picker">
+            <input
+              type="color"
+              value={overlay.textColor}
+              onChange={(e) => patch({ textColor: e.target.value })}
+              disabled={disabled}
+              aria-label="Text color"
+            />
+            <span className="cover-color-hex">{overlay.textColor}</span>
+          </span>
+        </label>
+        <div className="cover-color-field">
+          <span className="field-label">Background</span>
+          <div className="cover-bg-tools">
+            <span
+              className={`cover-color-picker${
+                overlay.bgTransparent ? " is-disabled" : ""
+              }`}
+            >
+              <input
+                type="color"
+                value={overlay.bgColor}
+                onChange={(e) =>
+                  patch({ bgColor: e.target.value, bgTransparent: false })
+                }
+                disabled={disabled || overlay.bgTransparent}
+                aria-label="Background color"
+              />
+              <span className="cover-color-hex">
+                {overlay.bgTransparent ? "None" : overlay.bgColor}
+              </span>
+            </span>
+            <button
+              type="button"
+              className={`speed-btn ${
+                overlay.bgTransparent ? "speed-btn--active" : ""
+              }`}
+              onClick={() => patch({ bgTransparent: !overlay.bgTransparent })}
+              disabled={disabled}
+            >
+              Transparent
+            </button>
+          </div>
+        </div>
+        <label className="cover-color-field">
+          <span className="field-label">Font size · {overlay.fontSize}px</span>
+          <input
+            type="range"
+            className="duet-font-range"
+            min={16}
+            max={72}
+            step={1}
+            value={overlay.fontSize}
+            onChange={(e) => patch({ fontSize: Number(e.target.value) })}
+            disabled={disabled}
+            aria-label="Font size"
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function DuetTab() {
+  const [top, setTop] = useState(null);
+  const [bottom, setBottom] = useState(null);
+  const [topAudio, setTopAudio] = useState(null);
+  const [bottomAudio, setBottomAudio] = useState(null);
+  const [muteTop, setMuteTop] = useState(false);
+  const [muteBottom, setMuteBottom] = useState(false);
+  const [overlay, setOverlay] = useState(defaultDuetOverlay);
+  const [layout, setLayout] = useState("split");
+  const [pipCorner, setPipCorner] = useState("br");
+  const [pipX, setPipX] = useState(82);
+  const [pipY, setPipY] = useState(89);
+  const [splitTop, setSplitTop] = useState(50);
+  const [topFit, setTopFit] = useState("contain");
+  const [bottomFit, setBottomFit] = useState("contain");
+  const [topPosY, setTopPosY] = useState(50);
+  const [bottomPosY, setBottomPosY] = useState(50);
+  const [topDragOver, setTopDragOver] = useState(false);
+  const [bottomDragOver, setBottomDragOver] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState("");
+  const [error, setError] = useState("");
+  const [downloadUrl, setDownloadUrl] = useState("");
+  const topInputRef = useRef(null);
+  const bottomInputRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (top) URL.revokeObjectURL(top.url);
+      if (bottom) URL.revokeObjectURL(bottom.url);
+      if (topAudio) URL.revokeObjectURL(topAudio.url);
+      if (bottomAudio) URL.revokeObjectURL(bottomAudio.url);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function markDirty() {
+    setDownloadUrl("");
+    setError("");
+    setProgress(0);
+    setStage("");
+  }
+
+  function replaceSlot(setter, current, file) {
+    if (current) URL.revokeObjectURL(current.url);
+    setter(fileToMediaItem(file));
+    markDirty();
+  }
+
+  function setTopFromList(fileList) {
+    const file = Array.from(fileList).find(isVideoFile);
+    if (file) replaceSlot(setTop, top, file);
+  }
+
+  function setBottomFromList(fileList) {
+    const file = Array.from(fileList).find(isVideoFile);
+    if (file) replaceSlot(setBottom, bottom, file);
+  }
+
+  function setTopAudioFromList(fileList) {
+    const file = Array.from(fileList).find(isAudioTrack);
+    if (file) replaceSlot(setTopAudio, topAudio, file);
+  }
+
+  function setBottomAudioFromList(fileList) {
+    const file = Array.from(fileList).find(isAudioTrack);
+    if (file) replaceSlot(setBottomAudio, bottomAudio, file);
+  }
+
+  function clearSlot(which) {
+    if (which === "top" && top) {
+      URL.revokeObjectURL(top.url);
+      setTop(null);
+    }
+    if (which === "bottom" && bottom) {
+      URL.revokeObjectURL(bottom.url);
+      setBottom(null);
+    }
+    if (which === "topAudio" && topAudio) {
+      URL.revokeObjectURL(topAudio.url);
+      setTopAudio(null);
+    }
+    if (which === "bottomAudio" && bottomAudio) {
+      URL.revokeObjectURL(bottomAudio.url);
+      setBottomAudio(null);
+    }
+    markDirty();
+  }
+
+  function swapClips() {
+    if (!top && !bottom) return;
+    setTop(bottom);
+    setBottom(top);
+    setTopAudio(bottomAudio);
+    setBottomAudio(topAudio);
+    setMuteTop(muteBottom);
+    setMuteBottom(muteTop);
+    setTopFit(bottomFit);
+    setBottomFit(topFit);
+    setTopPosY(bottomPosY);
+    setBottomPosY(topPosY);
+    markDirty();
+  }
+
+  async function handleCreate() {
+    if (!top && !bottom) {
+      setError("Upload at least one video.");
+      return;
+    }
+
+    setError("");
+    setDownloadUrl("");
+    setCreating(true);
+    setProgress(3);
+    setStage("uploading");
+
+    try {
+      const form = new FormData();
+      form.append("muteTop", muteTop ? "true" : "false");
+      form.append("muteBottom", muteBottom ? "true" : "false");
+      if (top) form.append("videoTop", top.file, top.file.name);
+      if (bottom) form.append("videoBottom", bottom.file, bottom.file.name);
+      if (top && topAudio && !muteTop) {
+        form.append("audioTop", topAudio.file, topAudio.file.name);
+      }
+      if (bottom && bottomAudio && !muteBottom) {
+        form.append("audioBottom", bottomAudio.file, bottomAudio.file.name);
+      }
+      form.append("overlayText", overlay.text);
+      form.append("overlayTextColor", overlay.textColor);
+      form.append("overlayBgColor", overlay.bgColor);
+      form.append("overlayBgTransparent", overlay.bgTransparent ? "true" : "false");
+      form.append("overlayFontSize", String(overlay.fontSize));
+      form.append("overlayFont", overlay.font || "jakarta");
+      form.append("overlayX", String(overlay.x));
+      form.append("overlayY", String(overlay.y));
+      form.append("layout", layout);
+      form.append("pipX", String(pipX));
+      form.append("pipY", String(pipY));
+      form.append("splitTop", String(splitTop));
+      const panes = duetSplitLayout(splitTop);
+      form.append("topH", String(panes.topH));
+      form.append("botH", String(panes.botH));
+      form.append("topFit", topFit);
+      form.append("bottomFit", bottomFit);
+      form.append("topPosY", String(topPosY));
+      form.append("bottomPosY", String(bottomPosY));
+      const captionPng = await renderDuetCaptionPng(overlay);
+      if (captionPng) form.append("overlayImage", captionPng, captionPng.name);
+
+      const res = await fetch("/api/duet", { method: "POST", body: form });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Upload failed");
+      }
+
+      const { jobId: id, downloadUrl: url } = await res.json();
+      setProgress(10);
+      setStage("stacking portrait duet");
+      await pollStatus(id, { setProgress, setStage });
+
+      setDownloadUrl(url);
+      setStage("complete");
+      setProgress(100);
+    } catch (err) {
+      setError(err.message || "Something went wrong");
+      setStage("");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  const ready = Boolean(top || bottom);
+  const splitMode = Boolean(top && bottom);
+  const movePip = useCallback((x, y) => {
+    setPipCorner("custom");
+    setPipX(x);
+    setPipY(y);
+  }, []);
+
+  const moveSplit = useCallback((value) => {
+    setSplitTop(clampDuetSplit(value));
+    setDownloadUrl("");
+    setError("");
+    setProgress(0);
+    setStage("");
+  }, []);
+
+  return (
+    <>
+      <section className="workspace-section">
+        <div className="split-intro">
+          <h2 className="section-title">Portrait duet</h2>
+          <p className="section-hint">
+            One video fills the portrait screen. Add a second clip, then pick
+            Split (drag the line for height). Fit full keeps a person inside
+            their half — Fill crops to fill the box.
+          </p>
+        </div>
+
+        <div className="music-upload-grid">
+          <div className="music-upload-block">
+            <h3 className="music-upload-label">1. Video one</h3>
+            <Dropzone
+              dragOver={topDragOver}
+              setDragOver={setTopDragOver}
+              onFiles={setTopFromList}
+              multiple={false}
+              subtitle="MP4, MOV, WebM · one clip fills the screen"
+              disabled={creating}
+              inputRef={topInputRef}
+            />
+            {top && (
+              <DuetClipCard
+                item={top}
+                customAudio={topAudio}
+                onCustomAudio={setTopAudioFromList}
+                onClearCustom={() => clearSlot("topAudio")}
+                onClear={() => clearSlot("top")}
+                muted={muteTop}
+                onToggleMute={() => setMuteTop((v) => !v)}
+                fit={topFit}
+                onFit={(next) => {
+                  setTopFit(next);
+                  markDirty();
+                }}
+                disabled={creating}
+                label="Top"
+              />
+            )}
+          </div>
+
+          <div className="music-upload-block">
+            <h3 className="music-upload-label">2. Video two — optional</h3>
+            <Dropzone
+              dragOver={bottomDragOver}
+              setDragOver={setBottomDragOver}
+              onFiles={setBottomFromList}
+              multiple={false}
+              subtitle="Optional · split (adjust height) or circle overlay"
+              disabled={creating}
+              inputRef={bottomInputRef}
+            />
+            {bottom && (
+              <DuetClipCard
+                item={bottom}
+                customAudio={bottomAudio}
+                onCustomAudio={setBottomAudioFromList}
+                onClearCustom={() => clearSlot("bottomAudio")}
+                onClear={() => clearSlot("bottom")}
+                muted={muteBottom}
+                onToggleMute={() => setMuteBottom((v) => !v)}
+                fit={bottomFit}
+                onFit={(next) => {
+                  setBottomFit(next);
+                  markDirty();
+                }}
+                disabled={creating}
+                label="Bottom"
+              />
+            )}
+          </div>
+        </div>
+
+        {(top || bottom) && (
+          <div className="duet-swap-row">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={swapClips}
+              disabled={creating || (!top && !bottom)}
+            >
+              Swap videos
+            </button>
+          </div>
+        )}
+
+        {splitMode && (
+          <div className="duet-layout-tools">
+            <span className="field-label">Layout</span>
+            <div className="duet-font-grid" role="radiogroup" aria-label="Duet layout">
+              {DUET_LAYOUTS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={`speed-btn${
+                    layout === opt.id ? " speed-btn--active" : ""
+                  }`}
+                  onClick={() => setLayout(opt.id)}
+                  disabled={creating}
+                  role="radio"
+                  aria-checked={layout === opt.id}
+                >
+                  {opt.title}
+                  <span className="duet-layout-hint">{opt.hint}</span>
+                </button>
+              ))}
+            </div>
+            {layout === "circle" && (
+              <>
+                <span className="field-label">Circle position</span>
+                <div
+                  className="duet-font-grid"
+                  role="radiogroup"
+                  aria-label="Circle corner"
+                >
+                  {DUET_PIP_CORNERS.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={`speed-btn${
+                        pipCorner === opt.id ? " speed-btn--active" : ""
+                      }`}
+                      onClick={() => {
+                        setPipCorner(opt.id);
+                        setPipX(opt.x);
+                        setPipY(opt.y);
+                      }}
+                      disabled={creating}
+                      role="radio"
+                      aria-checked={pipCorner === opt.id}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="section-hint">
+                  Or drag the circle on the player to place it anywhere.
+                </p>
+              </>
+            )}
+            {layout === "split" && (
+              <>
+                <span className="field-label">
+                  Split height · top {Math.round(splitTop)}% · bottom{" "}
+                  {Math.round(100 - splitTop)}%
+                </span>
+                <input
+                  type="range"
+                  className="duet-font-range"
+                  min={DUET_SPLIT_MIN}
+                  max={DUET_SPLIT_MAX}
+                  step="1"
+                  value={splitTop}
+                  onChange={(e) => {
+                    setSplitTop(clampDuetSplit(e.target.value));
+                    markDirty();
+                  }}
+                  disabled={creating}
+                  aria-label="Top video height"
+                />
+                <div className="duet-split-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost duet-mute-btn"
+                    onClick={() => {
+                      setSplitTop(50);
+                      markDirty();
+                    }}
+                    disabled={creating || splitTop === 50}
+                  >
+                    Reset 50 / 50
+                  </button>
+                  <p className="section-hint">
+                    Drag the middle line to set heights. Use Fit full on a
+                    clip so the person stays inside that half.
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </section>
+
+      {(top || bottom) && (
+        <section className="workspace-section">
+          <h2 className="section-title">
+            {splitMode ? "Duet player" : "Portrait player"}
+          </h2>
+          <p className="section-hint">
+            {splitMode
+              ? layout === "circle"
+                ? "First clip fills the screen. Drag the circle or pick a corner."
+                : "Drag the middle line for height. Fit full keeps the whole person visible. Fill + drag frames the face."
+              : "One clip fills the screen. Add a second video to choose Split or Circle."}
+          </p>
+          <DuetPlayer
+            top={top}
+            bottom={bottom}
+            topAudio={topAudio}
+            bottomAudio={bottomAudio}
+            muteTop={muteTop}
+            muteBottom={muteBottom}
+            onToggleMuteTop={() => setMuteTop((v) => !v)}
+            onToggleMuteBottom={() => setMuteBottom((v) => !v)}
+            overlay={overlay}
+            setOverlay={setOverlay}
+            textDisabled={creating}
+            layout={layout}
+            pipX={pipX}
+            pipY={pipY}
+            setPip={movePip}
+            splitTop={splitTop}
+            setSplitTop={moveSplit}
+            topFit={topFit}
+            bottomFit={bottomFit}
+            topPosY={topPosY}
+            bottomPosY={bottomPosY}
+            setTopPosY={(value) => {
+              setTopPosY(value);
+              markDirty();
+            }}
+            setBottomPosY={(value) => {
+              setBottomPosY(value);
+              markDirty();
+            }}
+          />
+          <DuetTextFields
+            overlay={overlay}
+            setOverlay={setOverlay}
+            disabled={creating}
+          />
+        </section>
+      )}
+
+      <section className="workspace-section">
+        <ProgressBlock
+          active={creating}
+          progress={progress}
+          stage={stage}
+          error={error}
+        />
+
+        <div
+          className={`action-bar${
+            creating || progress > 0 || error ? " action-bar--spaced" : ""
+          }`}
+        >
+          <button
+            className="btn btn-primary"
+            onClick={handleCreate}
+            disabled={creating || !ready}
+            type="button"
+          >
+            {creating
+              ? splitMode
+                ? "Creating duet…"
+                : "Creating video…"
+              : splitMode
+              ? "Create Duet"
+              : "Create Video"}
+          </button>
+
+          {downloadUrl && !creating && (
+            <a
+              className="btn btn-success"
+              href={downloadUrl}
+              download="zyvom-duet-latest.mp4"
+            >
+              Download MP4
+            </a>
+          )}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function IconPlay() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+      <path d="M8 6.5v11l9-5.5-9-5.5Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function IconPause() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+      <path d="M7 6h3.4v12H7V6Zm6.6 0H17v12h-3.4V6Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function IconSoundOn() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="M5 10v4h3.2L13 18V6L8.2 10H5Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M16.2 9.2a3.4 3.4 0 0 1 0 5.6M18.4 7a6.2 6.2 0 0 1 0 10"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function IconSoundOff() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+      <path
+        d="M5 10v4h3.2L13 18V6L8.2 10H5Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M17 9.5 21 13.5M21 9.5 17 13.5"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function seekMedia(el, time, clipDur) {
+  if (!el || !Number.isFinite(clipDur) || clipDur <= 0) return;
+  const next = Math.min(Math.max(0, time), Math.max(0, clipDur - 0.04));
+  try {
+    el.currentTime = next;
+  } catch {
+    // ignore seek before metadata
+  }
+}
+
+function DuetPanePlayer({
+  item,
+  customAudio,
+  muted,
+  onToggleMute,
+  label,
+  compact = false,
+  paneStyle,
+  fit = "cover",
+  posY = 50,
+  setPosY,
+}) {
+  const videoRef = useRef(null);
+  const audioRef = useRef(null);
+  const dragging = useRef(false);
+  const frameDrag = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [audioDur, setAudioDur] = useState(0);
+
+  function applyTime(time) {
+    seekMedia(videoRef.current, time, duration);
+    if (audioRef.current && audioDur > 0) {
+      seekMedia(audioRef.current, time % audioDur, audioDur);
+    }
+  }
+
+  function pauseClip() {
+    videoRef.current?.pause();
+    audioRef.current?.pause();
+    setPlaying(false);
+  }
+
+  async function playFrom(time) {
+    applyTime(time);
+    setCurrent(time);
+    const tasks = [];
+    if (videoRef.current && time < Math.max(0, duration - 0.05)) {
+      tasks.push(videoRef.current.play());
+    }
+    if (audioRef.current && !muted) tasks.push(audioRef.current.play());
+    await Promise.all(tasks.map((p) => p?.catch(() => {})));
+    setPlaying(true);
+  }
+
+  function togglePlay() {
+    if (playing) {
+      pauseClip();
+      return;
+    }
+    const startAt = duration > 0 && current >= duration - 0.05 ? 0 : current;
+    playFrom(startAt);
+  }
+
+  useEffect(() => {
+    pauseClip();
+    setCurrent(0);
+    setDuration(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.muted = Boolean(customAudio) || muted;
+    const audio = audioRef.current;
+    if (audio) {
+      audio.muted = muted;
+      if (playing && !muted) audio.play().catch(() => {});
+      if (muted) audio.pause();
+    }
+  }, [muted, customAudio, playing]);
+
+  useEffect(() => {
+    if (!playing) return undefined;
+    let raf = 0;
+    const tick = () => {
+      if (!dragging.current) {
+        const t = Number(videoRef.current?.currentTime || 0);
+        setCurrent(t);
+        if (duration > 0 && t >= duration - 0.08) {
+          applyTime(duration);
+          setCurrent(duration);
+          pauseClip();
+          return;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, duration]);
+
+  useEffect(() => {
+    return () => {
+      videoRef.current?.pause();
+      audioRef.current?.pause();
+    };
+  }, []);
+
+  function onFramePointerDown(e) {
+    if (!setPosY || e.target.closest("button, input")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    frameDrag.current = {
+      startY: e.clientY,
+      posY,
+      height: e.currentTarget.getBoundingClientRect().height || 1,
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+
+  useEffect(() => {
+    function onMove(e) {
+      if (!frameDrag.current || !setPosY) return;
+      const { startY, posY: start, height } = frameDrag.current;
+      const next = start - ((e.clientY - startY) / height) * 100;
+      setPosY(Math.max(0, Math.min(100, next)));
+    }
+    function onUp() {
+      frameDrag.current = null;
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [setPosY]);
+
+  if (!item) {
+    return (
+      <div
+        className={`duet-pane${compact ? " duet-pane--pip" : ""}`}
+        style={paneStyle}
+      >
+        <span className="duet-pane-empty">{label}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`duet-pane${compact ? " duet-pane--pip" : ""}${
+        setPosY ? " duet-pane--frame" : ""
+      }`}
+      style={paneStyle}
+      onPointerDown={onFramePointerDown}
+    >
+      <video
+        ref={videoRef}
+        src={item.url}
+        className="duet-pane-video"
+        style={{
+          objectFit: fit === "cover" ? "cover" : "contain",
+          objectPosition: `center ${posY}%`,
+        }}
+        muted={Boolean(customAudio) || muted}
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+      />
+      {customAudio && (
+        <audio
+          ref={audioRef}
+          src={customAudio.url}
+          preload="auto"
+          onLoadedMetadata={(e) => setAudioDur(e.currentTarget.duration || 0)}
+        />
+      )}
+      <button
+        type="button"
+        className={`duet-sound-btn${muted ? " duet-sound-btn--off" : ""}`}
+        onClick={onToggleMute}
+        aria-label={muted ? `Unmute ${label}` : `Mute ${label}`}
+        title={muted ? "Sound off" : "Sound on"}
+      >
+        {muted ? <IconSoundOff /> : <IconSoundOn />}
+      </button>
+      <div className="duet-pane-controls">
+        <button
+          type="button"
+          className="duet-play-btn"
+          onClick={togglePlay}
+          aria-label={playing ? `Pause ${label}` : `Play ${label}`}
+        >
+          {playing ? <IconPause /> : <IconPlay />}
+        </button>
+        {!compact && (
+          <>
+            <input
+              type="range"
+              className="duet-seek"
+              min={0}
+              max={duration || 0}
+              step={0.05}
+              value={Math.min(current, duration || 0)}
+              disabled={!duration}
+              onPointerDown={() => {
+                dragging.current = true;
+              }}
+              onPointerUp={(e) => {
+                dragging.current = false;
+                const t = Number(e.currentTarget.value);
+                if (playing) playFrom(t);
+                else applyTime(t);
+              }}
+              onChange={(e) => {
+                const t = Number(e.target.value);
+                if (!Number.isFinite(t)) return;
+                setCurrent(t);
+                applyTime(t);
+              }}
+              aria-label={`${label} seek`}
+            />
+            <span className="duet-time">
+              {formatDuration(current)} / {formatDuration(duration)}
+            </span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DuetPlayer({
+  top,
+  bottom,
+  topAudio,
+  bottomAudio,
+  muteTop,
+  muteBottom,
+  onToggleMuteTop,
+  onToggleMuteBottom,
+  overlay,
+  setOverlay,
+  textDisabled,
+  layout = "split",
+  pipX = 82,
+  pipY = 89,
+  setPip,
+  splitTop = 50,
+  setSplitTop,
+  topFit = "contain",
+  bottomFit = "contain",
+  topPosY = 50,
+  bottomPosY = 50,
+  setTopPosY,
+  setBottomPosY,
+}) {
+  const stageRef = useRef(null);
+  const drag = useRef(null);
+  const pipDrag = useRef(null);
+  const splitDrag = useRef(null);
+
+  function onCaptionPointerDown(e) {
+    if (textDisabled || !overlay.text.trim()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const stage = stageRef.current;
+    if (!stage) return;
+    drag.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      x: overlay.x,
+      y: overlay.y,
+      rect: stage.getBoundingClientRect(),
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+
+  function onSplitPointerDown(e) {
+    if (textDisabled || !setSplitTop) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const stage = stageRef.current;
+    if (!stage) return;
+    splitDrag.current = { rect: stage.getBoundingClientRect() };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+
+  function onPipPointerDown(e) {
+    if (textDisabled || !setPip) return;
+    if (e.target.closest("button, input")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const stage = stageRef.current;
+    if (!stage) return;
+    pipDrag.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      x: pipX,
+      y: pipY,
+      rect: stage.getBoundingClientRect(),
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+
+  useEffect(() => {
+    function onMove(e) {
+      if (splitDrag.current && setSplitTop) {
+        const { rect } = splitDrag.current;
+        if (rect.height) {
+          setSplitTop(splitTopFromStageY(e.clientY, rect));
+        }
+        return;
+      }
+      if (pipDrag.current && setPip) {
+        const { startX, startY, x, y, rect } = pipDrag.current;
+        if (rect.width && rect.height) {
+          setPip(
+            Math.max(10, Math.min(90, x + ((e.clientX - startX) / rect.width) * 100)),
+            Math.max(8, Math.min(92, y + ((e.clientY - startY) / rect.height) * 100))
+          );
+        }
+        return;
+      }
+      if (!drag.current) return;
+      const { startX, startY, x, y, rect } = drag.current;
+      if (!rect.width || !rect.height) return;
+      const nextX = x + ((e.clientX - startX) / rect.width) * 100;
+      const nextY = y + ((e.clientY - startY) / rect.height) * 100;
+      setOverlay((prev) => ({
+        ...prev,
+        x: Math.max(4, Math.min(96, nextX)),
+        y: Math.max(4, Math.min(96, nextY)),
+      }));
+    }
+    function onUp() {
+      drag.current = null;
+      pipDrag.current = null;
+      splitDrag.current = null;
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [setOverlay, setPip, setSplitTop]);
+
+  const caption = overlay.text.trim();
+  const split = Boolean(top && bottom);
+  const circle = split && layout === "circle";
+  const solo = top || bottom;
+  const soloTop = Boolean(top);
+  const panes = duetSplitLayout(splitTop);
+
+  return (
+    <div className="duet-player">
+      <div
+        ref={stageRef}
+        className={`duet-stage${
+          split && !circle ? " duet-stage--split" : " duet-stage--solo"
+        }`}
+        aria-label={split ? "Portrait duet player" : "Portrait player"}
+      >
+        {circle ? (
+          <>
+            <DuetPanePlayer
+              item={top}
+              customAudio={topAudio}
+              muted={muteTop}
+              onToggleMute={onToggleMuteTop}
+              label="Main clip"
+            />
+            <div
+              className="duet-pip"
+              style={{ left: `${pipX}%`, top: `${pipY}%` }}
+              onPointerDown={onPipPointerDown}
+            >
+              <DuetPanePlayer
+                item={bottom}
+                customAudio={bottomAudio}
+                muted={muteBottom}
+                onToggleMute={onToggleMuteBottom}
+                label="Circle clip"
+                compact
+              />
+            </div>
+          </>
+        ) : split ? (
+          <>
+            <DuetPanePlayer
+              item={top}
+              customAudio={topAudio}
+              muted={muteTop}
+              onToggleMute={onToggleMuteTop}
+              label="Top clip"
+              paneStyle={{ height: `${panes.topPct}%`, flex: "none" }}
+              fit={topFit}
+              posY={topPosY}
+              setPosY={setTopPosY}
+            />
+            <div
+              className="duet-stage-bar"
+              style={{ height: `${panes.barPct}%` }}
+              onPointerDown={onSplitPointerDown}
+              role="separator"
+              aria-orientation="horizontal"
+              aria-valuemin={DUET_SPLIT_MIN}
+              aria-valuemax={DUET_SPLIT_MAX}
+              aria-valuenow={Math.round(splitTop)}
+              aria-label="Drag to set clip heights"
+              title="Drag to set heights"
+            />
+            <DuetPanePlayer
+              item={bottom}
+              customAudio={bottomAudio}
+              muted={muteBottom}
+              onToggleMute={onToggleMuteBottom}
+              label="Bottom clip"
+              paneStyle={{ height: `${panes.botPct}%`, flex: "none" }}
+              fit={bottomFit}
+              posY={bottomPosY}
+              setPosY={setBottomPosY}
+            />
+          </>
+        ) : (
+          <DuetPanePlayer
+            item={solo}
+            customAudio={soloTop ? topAudio : bottomAudio}
+            muted={soloTop ? muteTop : muteBottom}
+            onToggleMute={soloTop ? onToggleMuteTop : onToggleMuteBottom}
+            label="Full clip"
+          />
+        )}
+        {caption ? (
+          <span
+            className="duet-caption"
+            style={{
+              left: `${overlay.x}%`,
+              top: `${overlay.y}%`,
+              color: overlay.textColor,
+              background: overlay.bgTransparent
+                ? "transparent"
+                : hexToRgba(overlay.bgColor, 0.88),
+              fontSize: `${Math.max(10, Math.round((overlay.fontSize || 28) * 0.3))}px`,
+              fontFamily: duetFontFamily(overlay.font),
+            }}
+            onPointerDown={onCaptionPointerDown}
+            role="button"
+            tabIndex={0}
+            aria-label="Drag text to place it"
+            title="Drag to place"
+          >
+            {caption}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function DuetClipCard({
+  item,
+  customAudio,
+  onCustomAudio,
+  onClearCustom,
+  onClear,
+  muted,
+  onToggleMute,
+  fit = "contain",
+  onFit,
+  disabled,
+  label,
+}) {
+  const audioInputRef = useRef(null);
+  return (
+    <div className="duet-clip-card">
+      <video
+        src={item.url}
+        className="duet-clip-thumb"
+        muted
+        playsInline
+        preload="metadata"
+        onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+        onMouseLeave={(e) => {
+          e.currentTarget.pause();
+          e.currentTarget.currentTime = 0;
+        }}
+      />
+      <div className="clip-info">
+        <div className="clip-name" title={item.file.name}>
+          {item.file.name}
+        </div>
+        <div className="clip-meta">
+          {label} · {formatSize(item.file.size)}
+          {muted ? " · sound off" : ""}
+        </div>
+      </div>
+      <div className="clip-actions">
+        <button
+          type="button"
+          className="icon-btn icon-btn--danger"
+          onClick={onClear}
+          disabled={disabled}
+          aria-label={`Remove ${label} video`}
+          title="Remove"
+        >
+          <IconClose />
+        </button>
+      </div>
+      <div className="duet-clip-sound">
+        <input
+          ref={audioInputRef}
+          type="file"
+          accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac"
+          hidden
+          disabled={disabled}
+          onChange={(e) => {
+            if (e.target.files?.length) onCustomAudio(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          className={`btn btn-ghost duet-mute-btn${
+            muted ? " duet-mute-btn--on" : ""
+          }`}
+          onClick={onToggleMute}
+          disabled={disabled}
+        >
+          {muted ? "Restore sound" : "Remove sound"}
+        </button>
+        {onFit ? (
+          <button
+            type="button"
+            className={`btn btn-ghost duet-mute-btn${
+              fit === "contain" ? " duet-mute-btn--on" : ""
+            }`}
+            onClick={() => onFit(fit === "contain" ? "cover" : "contain")}
+            disabled={disabled}
+            title={
+              fit === "contain"
+                ? "Showing the full video inside this half"
+                : "Filling this half — drag the video to frame the face"
+            }
+          >
+            {fit === "contain" ? "Fit full" : "Fill half"}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="btn btn-ghost duet-mute-btn"
+          onClick={() => audioInputRef.current?.click()}
+          disabled={disabled}
+        >
+          {customAudio ? "Change sound" : "Add custom sound"}
+        </button>
+        {customAudio ? (
+          <>
+            <span className="clip-meta" title={customAudio.file.name}>
+              {customAudio.file.name}
+            </span>
+            <button
+              type="button"
+              className="icon-btn icon-btn--danger"
+              onClick={onClearCustom}
+              disabled={disabled}
+              aria-label={`Remove ${label} custom sound`}
+              title="Remove custom sound"
+            >
+              <IconClose />
+            </button>
+          </>
+        ) : (
+          <span className="clip-meta">Optional · MP3 / M4A / WAV</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function looksLikeVideoUrl(value) {
   try {
     const parsed = new URL(String(value || "").trim());
@@ -3536,12 +4994,16 @@ export default function App() {
     <div className={`app-shell${navOpen ? " app-shell--nav-open" : ""}`}>
       <aside className="sidebar" aria-label="Studio navigation">
         <div className="sidebar-brand">
-          <div className="brand-mark" aria-hidden>
-            A
-          </div>
+          <img
+            className="brand-logo"
+            src="/logo.svg"
+            width="38"
+            height="38"
+            alt=""
+          />
           <div className="brand-copy">
-            <p className="brand-name">Arjuga</p>
-            <p className="brand-tagline">Reels Maker</p>
+            <p className="brand-name">Reals Maker</p>
+            <p className="brand-tagline">Studio</p>
           </div>
         </div>
 
@@ -3633,6 +5095,8 @@ export default function App() {
           >
             {activeTab === "merge" ? (
               <MergeTab />
+            ) : activeTab === "duet" ? (
+              <DuetTab />
             ) : activeTab === "split" ? (
               <SplitTab />
             ) : activeTab === "music" ? (

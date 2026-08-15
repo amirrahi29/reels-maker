@@ -117,6 +117,7 @@ const OUTPUT_NAMES = {
   music: "zyvom-music-latest.mp4",
   split: "zyvom-split-latest.zip",
   meme: "zyvom-meme-latest.zip",
+  duet: "zyvom-duet-latest.mp4",
 };
 
 /** Remove every file in output/ except .gitkeep (keeps only the next export). */
@@ -269,6 +270,49 @@ const uploadMeme = multer({
   limits: { fileSize: 2 * 1024 * 1024 * 1024 },
   fileFilter: videoFileFilter,
 });
+
+const duetFileFilter = (_req, file, cb) => {
+  if (file.fieldname === "videoTop" || file.fieldname === "videoBottom") {
+    return videoFileFilter(_req, file, cb);
+  }
+  if (file.fieldname === "overlayImage") {
+    if (
+      file.mimetype.startsWith("image/") ||
+      IMAGE_EXT.test(file.originalname || "")
+    ) {
+      return cb(null, true);
+    }
+    return cb(new Error("Only image files are allowed for overlay"));
+  }
+  if (
+    file.fieldname === "audio" ||
+    file.fieldname === "audioTop" ||
+    file.fieldname === "audioBottom"
+  ) {
+    if (
+      file.mimetype.startsWith("audio/") ||
+      AUDIO_EXT.test(file.originalname || "")
+    ) {
+      return cb(null, true);
+    }
+    return cb(new Error("Only audio files (MP3, M4A, WAV…) are allowed"));
+  }
+  cb(new Error("Unexpected upload field"));
+};
+
+const uploadDuet = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
+  fileFilter: duetFileFilter,
+});
+
+const DUET_WIDTH = 1080;
+const DUET_PANE_H = 958;
+const DUET_BAR_H = 4;
+const DUET_HEIGHT = DUET_PANE_H * 2 + DUET_BAR_H;
+const DUET_FPS = 30;
+const DUET_PIP_SIZE = 300;
+const DUET_PIP_RING = 10;
 
 const SPLIT_PARTS_MIN = 2;
 const SPLIT_PARTS_MAX = 80;
@@ -2039,6 +2083,400 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", service: "video-merge-backend" });
 });
 
+function duetAudioChain(inputRef, outLabel, durationSec) {
+  const d = durationSec.toFixed(3);
+  return (
+    `[${inputRef}]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,` +
+    `atrim=duration=${d},asetpts=PTS-STARTPTS,apad=whole_dur=${d}[${outLabel}]`
+  );
+}
+
+function parseDuetFontSize(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 28;
+  return Math.max(12, Math.min(120, Math.round(n)));
+}
+
+function parseDuetPercent(raw, fallback) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(2, Math.min(98, n));
+}
+
+function isFormFlagTrue(raw) {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  return /^(true|1|yes|on)$/i.test(String(v ?? "").trim());
+}
+
+/** Drop audio from a muted clip so FFmpeg cannot leak the original track. */
+function remuxWithoutAudio(inputPath) {
+  const parsed = path.parse(inputPath);
+  const outputPath = path.join(parsed.dir, `${parsed.name}-nosound${parsed.ext}`);
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .outputOptions(["-map", "0:v:0", "-c:v", "copy", "-an", "-movflags", "+faststart"])
+      .on("error", reject)
+      .on("end", () => resolve(outputPath))
+      .save(outputPath);
+  });
+}
+
+const DUET_FONT_FILES = {
+  jakarta: [
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+  ],
+  bebas: [
+    "/System/Library/Fonts/Supplemental/Impact.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Black.ttf",
+  ],
+  playfair: [
+    "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+  ],
+  pacifico: [
+    "/System/Library/Fonts/Supplemental/Brush Script.ttf",
+    "/System/Library/Fonts/Supplemental/SnellRoundhand.ttc",
+  ],
+  oswald: [
+    "/System/Library/Fonts/Supplemental/Arial Narrow Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+  ],
+  mono: [
+    "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+  ],
+  comic: [
+    "/System/Library/Fonts/Supplemental/Comic Sans MS Bold.ttf",
+    "/System/Library/Fonts/Supplemental/ChalkboardSE.ttc",
+  ],
+  merri: [
+    "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
+  ],
+};
+
+function parseDuetFont(raw) {
+  const id = String(raw || "jakarta").toLowerCase();
+  return DUET_FONT_FILES[id] ? id : "jakarta";
+}
+
+function resolveDuetFontPath(fontId) {
+  const list = DUET_FONT_FILES[parseDuetFont(fontId)] || DUET_FONT_FILES.jakarta;
+  return list.find((p) => fs.existsSync(p)) || resolveFontPath();
+}
+
+function parseDuetOverlay(body) {
+  const text = String(body?.overlayText || "").trim().slice(0, 120);
+  if (!text) return null;
+  const bgTransparent = String(body?.overlayBgTransparent || "") === "true";
+  return {
+    text,
+    textColor: parseHexColor(body?.overlayTextColor, "ffffff"),
+    bgColor: parseHexColor(body?.overlayBgColor, "111111"),
+    bgTransparent,
+    fontSize: parseDuetFontSize(body?.overlayFontSize),
+    font: parseDuetFont(body?.overlayFont),
+    x: parseDuetPercent(body?.overlayX, 50),
+    y: parseDuetPercent(body?.overlayY, 50),
+  };
+}
+
+function buildDuetTextOverlay(overlay) {
+  if (!overlay?.text) return "";
+  const fontPath = resolveDuetFontPath(overlay.font);
+  const fontOpt = fontPath ? `fontfile=${escapeFilterPath(fontPath)}:` : "";
+  const label = escapeDrawtext(overlay.text);
+  const fontSize = parseDuetFontSize(overlay.fontSize);
+  const fontColor = `0x${overlay.textColor || "ffffff"}`;
+  const x = (parseDuetPercent(overlay.x, 50) / 100).toFixed(4);
+  const y = (parseDuetPercent(overlay.y, 50) / 100).toFixed(4);
+  const box = overlay.bgTransparent
+    ? ""
+    : `:box=1:boxcolor=0x${overlay.bgColor || "111111"}@0.88:boxborderw=${Math.max(10, Math.round(fontSize * 0.45))}`;
+  return (
+    `drawtext=${fontOpt}text='${label}':x=(w*${x})-(tw/2):y=(h*${y})-(th/2):` +
+    `fontsize=${fontSize}:fontcolor=${fontColor}${box}:` +
+    `borderw=1:bordercolor=black@0.35`
+  );
+}
+
+function parseDuetSplitTop(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 50;
+  return Math.max(22, Math.min(78, n));
+}
+
+function duetSplitHeights(splitTopPercent) {
+  const usable = DUET_HEIGHT - DUET_BAR_H;
+  const pct = parseDuetSplitTop(splitTopPercent);
+  let topH = Math.round((usable * pct) / 100);
+  topH = Math.max(2, Math.min(usable - 2, topH));
+  if (topH % 2) topH += topH + 1 <= usable - 2 ? 1 : -1;
+  return { topH, botH: usable - topH };
+}
+
+function resolveDuetPanes(body) {
+  const usable = DUET_HEIGHT - DUET_BAR_H;
+  let topH = Math.round(Number(body?.topH));
+  let botH = Math.round(Number(body?.botH));
+  if (Number.isFinite(topH) && Number.isFinite(botH) && topH >= 2 && botH >= 2) {
+    if (topH % 2) topH += 1;
+    if (botH % 2) botH += 1;
+    if (topH + botH === usable) return { topH, botH };
+    const scaled = Math.round((topH / (topH + botH)) * usable);
+    topH = Math.max(2, Math.min(usable - 2, scaled));
+    if (topH % 2) topH += topH + 1 <= usable - 2 ? 1 : -1;
+    return { topH, botH: usable - topH };
+  }
+  return duetSplitHeights(body?.splitTop);
+}
+
+function parseDuetFit(raw) {
+  return String(raw || "contain").toLowerCase() === "cover" ? "cover" : "contain";
+}
+
+function parseDuetPosY(raw, fallback = 50) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(100, n));
+}
+
+function duetVideoChain(
+  inputRef,
+  outLabel,
+  durationSec,
+  padSec,
+  paneH = DUET_PANE_H,
+  fit = "contain",
+  posY = 50
+) {
+  const d = durationSec.toFixed(3);
+  const h = Math.max(2, Math.round(Number(paneH) || DUET_PANE_H));
+  const yMul = (parseDuetPosY(posY) / 100).toFixed(4);
+  const norm = `[${inputRef}]scale=iw*sar:ih:force_divisible_by=2,setsar=1`;
+  const sized =
+    fit === "cover"
+      ? `${norm},scale=${DUET_WIDTH}:${h}:force_original_aspect_ratio=increase:flags=bilinear,` +
+        `crop=${DUET_WIDTH}:${h}:(iw-${DUET_WIDTH})/2:(ih-${h})*${yMul}`
+      : `${norm},scale=${DUET_WIDTH}:${h}:force_original_aspect_ratio=decrease:flags=bilinear,` +
+        `pad=${DUET_WIDTH}:${h}:(ow-iw)/2:(oh-ih)*${yMul}:color=0x07080c`;
+  const parts = [sized, "setsar=1", `fps=${DUET_FPS}`, "format=yuv420p"];
+  if (padSec > 0.04) {
+    parts.push(`tpad=stop_mode=clone:stop_duration=${padSec.toFixed(3)}`);
+  }
+  parts.push(`trim=duration=${d}`, "setpts=PTS-STARTPTS");
+  return `${parts.join(",")}[${outLabel}]`;
+}
+
+function duetFullVideoChain(inputRef, outLabel, durationSec) {
+  const d = durationSec.toFixed(3);
+  return (
+    `[${inputRef}]scale=iw*sar:ih:force_divisible_by=2,setsar=1,` +
+    `scale=${DUET_WIDTH}:${DUET_HEIGHT}:force_original_aspect_ratio=increase:flags=bilinear,` +
+    `crop=${DUET_WIDTH}:${DUET_HEIGHT},setsar=1,fps=${DUET_FPS},format=yuv420p,` +
+    `trim=duration=${d},setpts=PTS-STARTPTS[${outLabel}]`
+  );
+}
+
+function parseDuetLayout(raw) {
+  return String(raw || "split").toLowerCase() === "circle" ? "circle" : "split";
+}
+
+function duetCircleChain(inputRef, outLabel, durationSec, padSec, size) {
+  const d = durationSec.toFixed(3);
+  const parts = [
+    `[${inputRef}]scale=${size}:${size}:force_original_aspect_ratio=increase:flags=bilinear`,
+    `crop=${size}:${size}`,
+    `fps=${DUET_FPS}`,
+    "format=rgba",
+    `geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(X-W/2,Y-H/2),min(W,H)/2-1),255,0)'`,
+  ];
+  if (padSec > 0.04) {
+    parts.push(`tpad=stop_mode=clone:stop_duration=${padSec.toFixed(3)}`);
+  }
+  parts.push(`trim=duration=${d}`, "setpts=PTS-STARTPTS");
+  return `${parts.join(",")}[${outLabel}]`;
+}
+
+/**
+ * Stack two clips in a 1080×1920 portrait frame (top / divider / bottom)
+ * and mix audio from whichever sources the user left enabled.
+ */
+function renderDuet({
+  topPath,
+  bottomPath,
+  topCustomAudioPath,
+  bottomCustomAudioPath,
+  useTopAudio,
+  useBottomAudio,
+  useTopCustom,
+  useBottomCustom,
+  topDuration,
+  bottomDuration,
+  overlay,
+  overlayImagePath,
+  layout,
+  pipX,
+  pipY,
+  splitTop,
+  paneTopH,
+  paneBotH,
+  topFit,
+  bottomFit,
+  topPosY,
+  bottomPosY,
+  outputPath,
+  onProgress,
+}) {
+  const single = !bottomPath;
+  const circle = !single && layout === "circle";
+  const durationSec = Math.max(topDuration, bottomDuration || 0, 0.2);
+  const textFilter = overlayImagePath ? "" : buildDuetTextOverlay(overlay);
+  const x = (parseDuetPercent(overlay?.x, 50) / 100).toFixed(4);
+  const y = (parseDuetPercent(overlay?.y, 50) / 100).toFixed(4);
+  const px = (parseDuetPercent(pipX, 82) / 100).toFixed(4);
+  const py = (parseDuetPercent(pipY, 89) / 100).toFixed(4);
+  const useStamp = Boolean(overlayImagePath);
+  const needPre = useStamp || Boolean(textFilter);
+  const filters = [];
+
+  if (single) {
+    filters.push(duetFullVideoChain("0:v", needPre ? "vpre" : "v", durationSec));
+  } else if (circle) {
+    const outer = DUET_PIP_SIZE + DUET_PIP_RING * 2;
+    const d = durationSec.toFixed(3);
+    filters.push(duetFullVideoChain("0:v", "base", durationSec));
+    filters.push(
+      duetCircleChain(
+        "1:v",
+        "circ",
+        durationSec,
+        durationSec - bottomDuration,
+        DUET_PIP_SIZE
+      )
+    );
+    filters.push(
+      `color=c=white:s=${outer}x${outer}:d=${d},format=rgba,geq=r='255':g='255':b='255':a='if(lte(hypot(X-W/2,Y-H/2),min(W,H)/2-1),255,0)'[ring]`,
+      "[ring][circ]overlay=(W-w)/2:(H-h)/2:format=auto[pip]",
+      `[base][pip]overlay=x=(main_w*${px})-(overlay_w/2):y=(main_h*${py})-(overlay_h/2):format=auto[${
+        needPre ? "vpre" : "v"
+      }]`
+    );
+  } else {
+    const { topH, botH } = resolveDuetPanes({
+      splitTop,
+      topH: paneTopH,
+      botH: paneBotH,
+    });
+    filters.push(
+      duetVideoChain(
+        "0:v",
+        "top",
+        durationSec,
+        durationSec - topDuration,
+        topH,
+        parseDuetFit(topFit),
+        topPosY
+      ),
+      duetVideoChain(
+        "1:v",
+        "bot",
+        durationSec,
+        durationSec - bottomDuration,
+        botH,
+        parseDuetFit(bottomFit),
+        bottomPosY
+      ),
+      `color=c=0x2a2a2e:s=${DUET_WIDTH}x${DUET_BAR_H}:d=${durationSec.toFixed(3)},fps=${DUET_FPS},format=yuv420p[bar]`,
+      needPre
+        ? "[top][bar][bot]vstack=inputs=3[vpre]"
+        : "[top][bar][bot]vstack=inputs=3[v]"
+    );
+  }
+
+  let nextIndex = single ? 1 : 2;
+  let overlayImageIndex = null;
+  if (useStamp) overlayImageIndex = nextIndex++;
+  if (useStamp) {
+    filters.push(
+      `[${overlayImageIndex}:v]format=rgba[stamp]`,
+      `[vpre][stamp]overlay=x=(main_w*${x})-(overlay_w/2):y=(main_h*${y})-(overlay_h/2):format=auto[v]`
+    );
+  } else if (textFilter) {
+    filters.push(`[vpre]${textFilter}[v]`);
+  }
+
+  let topCustomIndex = null;
+  let bottomCustomIndex = null;
+  if (useTopCustom && topCustomAudioPath) topCustomIndex = nextIndex++;
+  if (useBottomCustom && bottomCustomAudioPath) bottomCustomIndex = nextIndex++;
+
+  const audioLabels = [];
+  if (useTopCustom && topCustomIndex != null) {
+    filters.push(duetAudioChain(`${topCustomIndex}:a`, "a0", durationSec));
+    audioLabels.push("[a0]");
+  } else if (useTopAudio) {
+    filters.push(duetAudioChain("0:a", "a0", durationSec));
+    audioLabels.push("[a0]");
+  }
+  if (useBottomCustom && bottomCustomIndex != null) {
+    filters.push(duetAudioChain(`${bottomCustomIndex}:a`, "a1", durationSec));
+    audioLabels.push("[a1]");
+  } else if (useBottomAudio) {
+    filters.push(duetAudioChain("1:a", "a1", durationSec));
+    audioLabels.push("[a1]");
+  }
+
+  const wantAudio = audioLabels.length > 0;
+  if (wantAudio && audioLabels.length === 1) {
+    filters.push(`${audioLabels[0]}aresample=44100[a]`);
+  } else if (wantAudio) {
+    filters.push(
+      `${audioLabels.join("")}amix=inputs=${audioLabels.length}:duration=first:dropout_transition=2:normalize=1[a]`
+    );
+  }
+
+  return new Promise((resolve, reject) => {
+    const cmd = ffmpeg().input(topPath);
+    if (!single) cmd.input(bottomPath);
+    if (overlayImageIndex != null) {
+      cmd.input(overlayImagePath).inputOptions(["-loop", "1"]);
+    }
+    if (topCustomIndex != null) {
+      cmd.input(topCustomAudioPath).inputOptions(["-stream_loop", "-1"]);
+    }
+    if (bottomCustomIndex != null) {
+      cmd.input(bottomCustomAudioPath).inputOptions(["-stream_loop", "-1"]);
+    }
+
+    const audioOut = wantAudio
+      ? ["-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "44100"]
+      : ["-an"];
+
+    cmd
+      .complexFilter(filters)
+      .outputOptions([
+        "-map",
+        "[v]",
+        ...audioOut,
+        ...slideshowEncodeOpts({ mode: "final", bitrate: "8M", crf: 20 }),
+        "-t",
+        durationSec.toFixed(3),
+        "-movflags",
+        "+faststart",
+        "-dn",
+        "-sn",
+      ])
+      .on("progress", (p) =>
+        reportTimedProgress(onProgress, durationSec, 12, 99, p)
+      )
+      .on("error", reject)
+      .on("end", () => resolve(outputPath))
+      .save(outputPath);
+  });
+}
+
 /**
  * POST /api/merge
  *   multipart/form-data with:
@@ -2227,6 +2665,194 @@ app.post(
     clearUploadsDir();
   }
 });
+
+/**
+ * POST /api/duet
+ *   multipart/form-data with:
+ *     videoTop:     first clip (required if videoBottom is missing)
+ *     videoBottom:  second clip (optional — omit for a full-screen portrait)
+ *     audioTop:     optional custom soundtrack for the top clip
+ *     audioBottom:  optional custom soundtrack for the bottom clip
+ *     muteTop:      "true" | "false"
+ *     muteBottom:   "true" | "false"
+ *
+ *   Stacks both clips in a 1080×1920 portrait frame (TikTok / Reels duet).
+ *   Duration follows the longer clip; the shorter one freezes on the last frame.
+ *   Audio is mixed from whichever sources stay enabled.
+ *
+ * Response: { jobId, statusUrl, downloadUrl }
+ */
+app.post(
+  "/api/duet",
+  uploadDuet.fields([
+    { name: "videoTop", maxCount: 1 },
+    { name: "videoBottom", maxCount: 1 },
+    { name: "audioTop", maxCount: 1 },
+    { name: "audioBottom", maxCount: 1 },
+    { name: "overlayImage", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    const topFile = req.files?.videoTop?.[0];
+    const bottomFile = req.files?.videoBottom?.[0];
+    const audioTopFile = req.files?.audioTop?.[0];
+    const audioBottomFile = req.files?.audioBottom?.[0];
+    const overlayImageFile = req.files?.overlayImage?.[0];
+    const uploadedPaths = [
+      topFile?.path,
+      bottomFile?.path,
+      audioTopFile?.path,
+      audioBottomFile?.path,
+      overlayImageFile?.path,
+    ].filter(Boolean);
+
+    if (!topFile && !bottomFile) {
+      cleanupFiles(uploadedPaths);
+      return res.status(400).json({
+        error: "Upload at least one video",
+      });
+    }
+
+    const muteTop = isFormFlagTrue(req.body?.muteTop);
+    const muteBottom = isFormFlagTrue(req.body?.muteBottom);
+
+    const jobId = uuidv4();
+    clearOutputDir();
+    clearUploadsDir(uploadedPaths);
+    const outputPath = path.join(OUTPUT_DIR, OUTPUT_NAMES.duet);
+
+    jobs.set(jobId, {
+      status: "processing",
+      progress: 2,
+      stage: "reading clips",
+      outputPath,
+      downloadName: OUTPUT_NAMES.duet,
+    });
+
+    res.json({
+      jobId,
+      statusUrl: `/api/status/${jobId}`,
+      downloadUrl: `/api/download/${jobId}`,
+    });
+
+    try {
+      const singleFile = topFile && bottomFile ? null : topFile || bottomFile;
+      const topMeta = topFile ? await probeMedia(topFile.path) : null;
+      const bottomMeta = bottomFile ? await probeMedia(bottomFile.path) : null;
+      const topDuration = topFile ? await probeDuration(topFile.path) : 0;
+      const bottomDuration = bottomFile
+        ? await probeDuration(bottomFile.path)
+        : 0;
+
+      const job = jobs.get(jobId);
+      if (job) {
+        job.progress = 10;
+        job.stage = singleFile
+          ? "encoding portrait video"
+          : "stacking portrait duet";
+      }
+
+      const soloIsTop = Boolean(topFile);
+      const soloMuted = soloIsTop ? muteTop : muteBottom;
+      const scratchPaths = [];
+      async function pathForClip(file, muted, meta) {
+        if (!file) return null;
+        if (!muted || !meta?.hasAudio) return file.path;
+        try {
+          const silentPath = await remuxWithoutAudio(file.path);
+          scratchPaths.push(silentPath);
+          return silentPath;
+        } catch {
+          return file.path;
+        }
+      }
+      const topRenderPath = singleFile
+        ? await pathForClip(
+            singleFile,
+            soloMuted,
+            soloIsTop ? topMeta : bottomMeta
+          )
+        : await pathForClip(topFile, muteTop, topMeta);
+      const bottomRenderPath = singleFile
+        ? null
+        : await pathForClip(bottomFile, muteBottom, bottomMeta);
+      uploadedPaths.push(...scratchPaths);
+
+      await renderDuet({
+        topPath: topRenderPath,
+        bottomPath: bottomRenderPath,
+        topCustomAudioPath: singleFile
+          ? soloMuted
+            ? null
+            : (soloIsTop ? audioTopFile : audioBottomFile)?.path || null
+          : muteTop
+            ? null
+            : audioTopFile?.path || null,
+        bottomCustomAudioPath: singleFile
+          ? null
+          : muteBottom
+            ? null
+            : audioBottomFile?.path || null,
+        useTopAudio: singleFile
+          ? !soloMuted &&
+            !(soloIsTop ? audioTopFile : audioBottomFile) &&
+            Boolean((soloIsTop ? topMeta : bottomMeta)?.hasAudio)
+          : !muteTop && !audioTopFile && Boolean(topMeta?.hasAudio),
+        useBottomAudio: singleFile
+          ? false
+          : !muteBottom && !audioBottomFile && Boolean(bottomMeta?.hasAudio),
+        useTopCustom: singleFile
+          ? !soloMuted && Boolean(soloIsTop ? audioTopFile : audioBottomFile)
+          : !muteTop && Boolean(audioTopFile),
+        useBottomCustom: singleFile
+          ? false
+          : !muteBottom && Boolean(audioBottomFile),
+        topDuration: singleFile
+          ? soloIsTop
+            ? topDuration
+            : bottomDuration
+          : topDuration,
+        bottomDuration: singleFile ? 0 : bottomDuration,
+        overlay: parseDuetOverlay(req.body),
+        overlayImagePath: overlayImageFile?.path || null,
+        layout: parseDuetLayout(req.body?.layout),
+        pipX: parseDuetPercent(req.body?.pipX, 82),
+        pipY: parseDuetPercent(req.body?.pipY, 89),
+        splitTop: parseDuetSplitTop(req.body?.splitTop),
+        paneTopH: req.body?.topH,
+        paneBotH: req.body?.botH,
+        topFit: parseDuetFit(req.body?.topFit),
+        bottomFit: parseDuetFit(req.body?.bottomFit),
+        topPosY: parseDuetPosY(req.body?.topPosY),
+        bottomPosY: parseDuetPosY(req.body?.bottomPosY),
+        outputPath,
+        onProgress: (p) => {
+          const j = jobs.get(jobId);
+          if (j && Number.isFinite(p?.percent)) {
+            j.progress = Math.min(99, Math.round(p.percent));
+            j.stage = "encoding duet";
+          }
+        },
+      });
+
+      const done = jobs.get(jobId);
+      if (done) {
+        done.status = "done";
+        done.progress = 100;
+        done.stage = "complete";
+      }
+    } catch (err) {
+      console.error(`Duet job ${jobId} failed:`, err);
+      const job = jobs.get(jobId);
+      if (job) {
+        job.status = "error";
+        job.error = err.message || "Duet processing failed";
+      }
+    } finally {
+      cleanupFiles(uploadedPaths);
+      clearUploadsDir();
+    }
+  }
+);
 
 /**
  * POST /api/split
