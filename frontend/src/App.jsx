@@ -2404,8 +2404,8 @@ function MusicTab() {
             <div className="setting-main">
               <span className="setting-label">Audio visualizer</span>
               <span className="setting-desc">
-                Slim spectrum bar in the bottom frame. Photos sit inside
-                padded, color-matched margins so nothing looks stretched.
+                Full thumbnail fits the frame — nothing is cropped.
+                Spectrum bar sits below the image.
               </span>
             </div>
             <div className="setting-control">
@@ -2454,9 +2454,8 @@ function MusicTab() {
             <div className="setting-main">
               <span className="setting-label">Output format</span>
               <span className="setting-desc">
-                Canvas size. Auto picks best fit. Each photo sits in a
-                padded frame with a matching blur fill, then loops with the
-                song.
+                Canvas size. Auto picks best fit. Photos fill the frame
+                (2px edge) and loop with the song.
               </span>
             </div>
             <div className="layout-grid" role="radiogroup" aria-label="Output layout">

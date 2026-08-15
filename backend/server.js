@@ -840,38 +840,39 @@ function evenDim(n) {
   return n - (n % 2);
 }
 
-/** 20–24px frame gutter so the photo never kisses the screen edge. */
-function slideshowGutter(width, height) {
-  const m = Math.round(Math.min(width, height) * 0.022);
-  return evenDim(Math.max(20, Math.min(24, m)));
+/** 2px frame gutter — almost full-bleed so the border is not noticeable. */
+function slideshowGutter(_width, _height) {
+  return 2;
 }
 
-/** Slim bottom spectrum — sits in the frame gutter, not over the photo. */
+/** Bottom spectrum — tall enough to read, still a strip not a wall. */
 function slideshowVisualizerHeight(frameHeight) {
   return evenDim(
-    Math.max(56, Math.min(80, Math.round(frameHeight * 0.068)))
+    Math.max(96, Math.min(148, Math.round(frameHeight * 0.11)))
   );
 }
 
-/** Inner photo box — equal gutter on every side. Visualizer overlays the bottom. */
+/** Inner photo box — visualizer gets its own strip so it does not cover the image. */
 function slideshowInnerBox(width, height, { visualizer = true } = {}) {
   const gutter = slideshowGutter(width, height);
   const vizH = visualizer ? slideshowVisualizerHeight(height) : 0;
+  const innerW = evenDim(width - gutter * 2);
+  const innerH = evenDim(height - gutter * 2 - vizH);
   return {
     gutter,
     vizH,
     gap: 0,
     padX: gutter,
     padTop: gutter,
-    padBottom: gutter,
-    innerW: evenDim(width - gutter * 2),
-    innerH: evenDim(height - gutter * 2),
+    padBottom: gutter + vizH,
+    innerW,
+    innerH: Math.max(2, innerH),
   };
 }
 
 /**
- * Photo cover-fills a padded frame. The thin gutter is a bright, color-matched
- * blur of the same image — never a black letterbox.
+ * Full thumbnail sits inside the frame (contain, never cropped). Empty
+ * space is a color-matched blur — no black bars, no cut text.
  */
 async function prepareFramedStill(
   imagePath,
@@ -925,22 +926,31 @@ async function prepareFramedStill(
     ])
     .toBuffer();
 
-  // Cover the inner box so the photo fills the frame; only the thin
-  // gutter shows the color-matched blur (no black pillar/letterbox).
+  const meta = await sharp(imagePath).rotate().metadata();
+  const srcW = Number(meta.width) || innerW;
+  const srcH = Number(meta.height) || innerH;
+  const scale = Math.min(innerW / srcW, innerH / srcH);
+  let dw = evenDim(Math.max(2, Math.round(srcW * scale)));
+  let dh = evenDim(Math.max(2, Math.round(srcH * scale)));
+  if (dw > innerW) dw = evenDim(innerW);
+  if (dh > innerH) dh = evenDim(innerH);
+
   const photo = await sharp(imagePath)
     .rotate()
     .resize({
-      width: innerW,
-      height: innerH,
-      fit: "cover",
-      position: "centre",
+      width: dw,
+      height: dh,
+      fit: "fill",
       kernel: sharp.kernel.lanczos3,
     })
     .jpeg({ quality: 94, mozjpeg: true })
     .toBuffer();
 
+  const left = padX + Math.round((innerW - dw) / 2);
+  const top = padTop + Math.round((innerH - dh) / 2);
+
   await sharp(background)
-    .composite([{ input: photo, left: padX, top: padTop }])
+    .composite([{ input: photo, left, top }])
     .jpeg({ quality: 93, mozjpeg: true })
     .toFile(outPath);
 }
