@@ -1,84 +1,89 @@
-# Video Merger & Watermark Remover
+# Arjuga Reels Maker
 
-Ek complete full-stack app jisse aap multiple short videos ko merge kar
-sakte ho, optionally corner watermark (Grok / TikTok jaisa) hata sakte ho,
-aur chuni hui layout (portrait / landscape / square) me ek clean MP4
-download kar sakte ho.
+Local video studio for Reels, Shorts, and YouTube clips. Merge, split, make
+music videos, find viral scenes, and download from a URL — all from one dark UI.
 
-- **Node backend:** Express + FFmpeg, port `5050` — merge, split, speed, watermark, music
-- **Python backend:** FastAPI + yt-dlp + OpenAI, port `5051` — URL download qualities + Meme transcript
-- **Frontend:** React + Vite, port `5173`
-- Frontend sirf Node (`/api`) se baat karta hai. Node import/transcribe ko Python par proxy karta hai.
+- **Frontend:** React + Vite · `http://localhost:5173`
+- **Node backend:** Express + FFmpeg · `http://localhost:5050`
+- **Python backend:** FastAPI + yt-dlp · `http://127.0.0.1:5051`
 
-![Empty state](docs/screenshots/01-empty-state.png)
+The browser talks only to Node (`/api`). Node proxies URL import and
+transcription to Python.
 
-## Features
+![Merge tool](docs/screenshots/01-merge.png)
 
-- **Multi-clip merge** — 2+ videos ko ek MP4 me concatenate karta hai
-- **Drag-and-drop reorder** — clips ka order arrows ya drag se set karein
-- **Watermark removal** — FFmpeg ke `delogo` filter se corner watermark
-  ko surrounding pixels se inpaint karta hai
-- **Position picker** — ↖ ↗ ↙ ↘ four corners me se koi bhi
-- **Layout selector** — Auto / Landscape (1280×720) / Portrait (720×1280) / Square (1080×1080)
-- **Single-video mode** — sirf 1 video bhi process kar sakte ho (watermark removal ke saath)
-- **Live progress** — async job + status polling, frontend me progress bar
-- **No extra FFmpeg install** — binary `ffmpeg-static` ke through bundled
-- **URL import** — paste link, 360p / 720p / 1080p / Recommended MP4 choose karke download
-- **Meme transcript** — video upload → exact, copy-able transcript (OpenAI)
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| **Merge Multiple Videos** | Join clips into one MP4. Optional cover box (blur / text / image) over a watermark. |
+| **Split Video** | Cut one video into N equal parts and download a ZIP. Same cover option. |
+| **Make Video with Music** | Photos + MP3 → slideshow with visualizer and flower rain. |
+| **Meme Finder** | Pick a category (comedy, song, roast…), upload a movie/clip, get transcript + split scenes. |
+| **Video Downloader** | Paste YouTube / Instagram / Facebook / LinkedIn URL, pick quality, save MP4. |
 
 ## Screenshots
 
-### Landing (empty state)
+### Merge Multiple Videos
 
-Drop videos, configure watermark removal, choose output layout.
+Drop clips, cover a watermark if needed, export one file.
 
-![Empty state](docs/screenshots/01-empty-state.png)
+![Merge](docs/screenshots/01-merge.png)
 
-### After loading clips
+### Split Video
 
-Drag-and-drop video thumbnails with reorder controls. "Remove watermark &
-merge" button context-aware label change karta hai.
+Set how many parts you want. Output is a ZIP.
 
-![With clips loaded](docs/screenshots/02-with-clips.png)
+![Split](docs/screenshots/02-split.png)
 
-### Portrait layout selected
+### Make Video with Music
 
-Portrait videos ko letterbox kiye bina full-screen 720×1280 me output deta hai.
+Queue images and tracks, then export a music video.
 
-![Portrait layout selected](docs/screenshots/03-layout-portrait.png)
+![Music](docs/screenshots/03-music.png)
 
-### Watermark off (merge-only mode)
+### Meme Finder
 
-Toggle off karne par position picker dim ho jata hai, CTA "Merge videos" ban
-jata hai.
+Choose a category first (comedy, song, romance…). Transcript is generated
+once. Scenes are cut for **that category only**, across the full video.
+Movie intro / logos are skipped. Language is always auto-detect.
 
-![Watermark off](docs/screenshots/04-watermark-off.png)
+![Meme Finder](docs/screenshots/04-meme-finder.png)
+
+### Video Downloader
+
+Paste a public link, choose quality, preview, download.
+
+![Downloader](docs/screenshots/05-downloader.png)
 
 ## Project structure
 
 ```
 .
-├── backend/                 Node Express API (port 5050)
-│   ├── server.js            Merge / split / music / proxy to Python
-│   ├── .env                 OPENAI_API_KEY yahan rakho
-│   └── package.json
-├── backend-python/          FastAPI (port 5051)
-│   ├── app.py               URL import + transcript
-│   ├── start.sh             venv + install + run
-│   ├── requirements.txt
-│   └── README.md            Python commands
-├── frontend/                React + Vite (port 5173)
-├── scripts/
+├── backend/                 Node API (5050) — merge, split, music, meme split
+│   ├── server.js
+│   ├── .env                 OPENAI_API_KEY (not committed)
+│   └── .gitignore
+├── backend-python/          FastAPI (5051) — URL import + transcribe
+│   ├── app.py
+│   ├── start.sh
+│   └── .gitignore
+├── frontend/                React + Vite (5173)
+├── scripts/                 README screenshot helpers
 └── docs/screenshots/
 ```
 
+Generated files stay in `backend/uploads`, `backend/output`,
+`backend-python/uploads`, and `backend-python/output`. They use fixed
+`*-latest` names and are gitignored so the repo does not fill up.
+
 ## Requirements
 
-- Node.js 18+ (LTS recommended)
+- Node.js 18+
 - npm 9+
-- Python 3.10+ (3.12 / 3.13 best). macOS system Python 3.9 yt-dlp ke liye kaafi nahi hai.
+- Python 3.10+ (3.12 / 3.13 recommended). macOS system Python 3.9 is not enough for yt-dlp.
 
-FFmpeg `ffmpeg-static` se bundled hai — alag install zaroori nahi.
+FFmpeg comes from `ffmpeg-static`. A separate FFmpeg install is optional.
 
 ## Setup
 
@@ -87,7 +92,7 @@ cd backend && npm install
 cd ../frontend && npm install
 ```
 
-Python (pehli baar):
+Python (first time):
 
 ```bash
 cd backend-python
@@ -95,155 +100,141 @@ chmod +x start.sh
 ./start.sh
 ```
 
-`backend/.env` me:
+Add your key in `backend/.env` (never commit this file):
 
 ```bash
 OPENAI_API_KEY=sk-...
 ```
 
+The key is used only for:
+
+1. **Meme Finder — Find moments** (`gpt-4o-mini`) after a transcript exists
+2. **Transcribe fallback** (`gpt-4o-transcribe`) when YouTube captions are missing
+
+Upload, URL download, YouTube captions, FFmpeg split/ZIP, and category
+re-select from cache do **not** call OpenAI.
+
 ## Run (development)
 
-**Teen terminals** chahiye. Node ke baad Python band ho to Merge/Split/Music chalenge, Meme URL + transcript nahi.
+Three terminals.
 
-**Terminal 1 — Node backend** (`http://localhost:5050`):
+**1 — Node** (`5050`):
 
 ```bash
 cd backend
 npm start
 ```
 
-Code watch chahiye ho to `npm run dev` (nodemon). Node auto-reload nahi karta `npm start` par — `server.js` change ke baad dubara start karo.
+`npm start` does not auto-reload. Restart after `server.js` changes.
 
-**Terminal 2 — Python backend** (`http://127.0.0.1:5051`):
+**2 — Python** (`5051`):
 
 ```bash
 cd backend-python
 ./start.sh
 ```
 
-Manual:
+Full Python notes: [backend-python/README.md](backend-python/README.md)
 
-```bash
-cd backend-python
-source .venv/bin/activate
-uvicorn app:app --host 127.0.0.1 --port 5051 --timeout-keep-alive 300
-```
-
-Poori Python guide: [backend-python/README.md](backend-python/README.md)
-
-**Terminal 3 — Frontend** (`http://localhost:5173`):
+**3 — Frontend** (`5173`):
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-Frontend `/api/*` ko Node `5050` par proxy karta hai. Node import/transcribe ko Python `5051` par bhejta hai.
-
-Browser: `http://localhost:5173`
-
-Health:
+Open [http://localhost:5173](http://localhost:5173).
 
 ```bash
 curl http://localhost:5050/api/health
 curl http://127.0.0.1:5051/api/health
 ```
 
+If Python is down, merge / split / music still work. URL download and
+transcript will fail.
+
 ## How to use
 
-1. **Add clips** — Dropzone par click karein ya videos drag-drop karein
-   (MP4 / MOV / WebM / MKV).
-2. **Reorder** — Up/Down arrows se ya drag-and-drop se clips ka order set
-   karein. Yahi order final video me hoga.
-3. **Watermark removal (optional)** — toggle ON karke position select
-   karein (default ↘ bottom-right Grok ke liye).
-4. **Output layout** — choose karein:
-   - **Auto** *(default)* — first clip ke orientation se match karta hai
-   - **Landscape** 1280×720 (16:9) — YouTube / monitors
-   - **Portrait** 720×1280 (9:16) — Reels / Shorts / TikTok
-   - **Square** 1080×1080 (1:1) — Instagram feed
-5. **Process** — CTA dabao (label automatically badalta hai based on
-   selections). Live progress bar dikhega — uploading → normalising / cleaning
-   → merging → complete.
-6. **Download** — "Download merged video" button se MP4 save karein.
+### Merge
 
-## API endpoints (backend)
+1. Add 1+ videos (MP4, MOV, WebM, MKV).
+2. Turn on cover if you need to hide a watermark. Draw the box on the preview.
+3. Choose blur, text, or image cover.
+4. Merge and download `zyvom-latest.mp4` (overwrites the previous export).
 
-| Method | Endpoint                | Description                                   |
-| ------ | ----------------------- | --------------------------------------------- |
-| GET    | `/api/health`           | Health check                                  |
-| POST   | `/api/merge`            | Merge / speed / watermark cover               |
-| POST   | `/api/split`            | Equal parts ZIP                               |
-| POST   | `/api/slideshow`        | Images + music video                          |
-| POST   | `/api/import/info`      | URL qualities (Python)                        |
-| POST   | `/api/import/download`  | Download selected quality (Python)            |
-| POST   | `/api/transcribe`       | Exact transcript (Python)                     |
-| GET    | `/api/status/:jobId`    | Job progress (Node, else Python)              |
-| GET    | `/api/download/:jobId`  | Output file                                   |
+### Split
 
-### `POST /api/merge` form fields
+1. Upload one video.
+2. Enter part count.
+3. Optional cover box, same as merge.
+4. Download the ZIP.
 
-| Field             | Required | Default          | Values                                                          |
-| ----------------- | -------- | ---------------- | --------------------------------------------------------------- |
-| `videos`          | yes      | —                | One or more video files (2+ required when watermark off)        |
-| `removeWatermark` | no       | `false`          | `true` / `false`                                                |
-| `position`        | no       | `bottom-right`   | `bottom-right` / `bottom-left` / `top-right` / `top-left`       |
-| `layout`          | no       | `auto`           | `auto` / `landscape` / `portrait` / `square`                    |
+### Music video
 
-### Sample `curl`
+1. Add images and one or more audio files.
+2. Toggle visualizer / flowers if you want.
+3. Export. The slide loop runs until the song ends.
 
-```bash
-# Merge two clips, remove bottom-right watermark, force portrait output
-curl -F "videos=@clip1.mp4" \
-     -F "videos=@clip2.mp4" \
-     -F "removeWatermark=true" \
-     -F "position=bottom-right" \
-     -F "layout=portrait" \
-     http://localhost:5050/api/merge
-```
+### Meme Finder
+
+1. **Choose one category** (comedy, song, roast, …).
+2. Upload a file or paste a URL and download a quality.
+3. Transcript is built automatically (YouTube captions first, Whisper only if needed).
+4. Scenes for **that category** are found across the **full** movie, then split.
+5. Play / download each clip on the right, or **All ZIP**.
+
+Do not expect every category to invent scenes. If Song finds no sung lyrics
+or caption-gap gaana, you get an error instead of a random dialogue cut.
+
+### Downloader
+
+1. Paste a public video URL.
+2. Fetch qualities, pick one, download, preview, save MP4.
+
+## API
+
+| Method | Endpoint | Service | Description |
+| --- | --- | --- | --- |
+| GET | `/api/health` | Node / Python | Health check |
+| POST | `/api/merge` | Node | Merge + optional cover |
+| POST | `/api/split` | Node | Equal parts ZIP |
+| POST | `/api/slideshow` | Node | Images + music |
+| POST | `/api/import/info` | Python | URL qualities |
+| POST | `/api/import/download` | Python | Download selected quality |
+| POST | `/api/import/transcript` | Python | YouTube captions |
+| POST | `/api/transcribe` | Python | Upload → transcript |
+| POST | `/api/meme/analyze` | Node | Category scenes from transcript |
+| POST | `/api/meme/split` | Node | Cut those scenes |
+| GET | `/api/status/:jobId` | Node, else Python | Job progress |
+| GET | `/api/download/:jobId` | Node / Python | Output file |
+| GET | `/api/download/:jobId/:clip` | Node | Single meme clip |
 
 ## Production build
 
 ```bash
 cd frontend
-npm run build       # generates frontend/dist
+npm run build
 ```
 
-Aap `dist/` ko kisi bhi static host (Nginx, Vercel, Netlify, etc.) par
-deploy kar sakte hain, aur backend ko alag deploy karke build time par
-appropriate API base configure kar sakte hain (yaha simple Vite proxy use
-ho rahi hai dev ke liye).
-
-## Configuration
-
-- **Per-file size limit:** 500 MB (`backend/server.js` → `multer` config)
-- **Output quality:** H.264 CRF 20, AAC 192 kbps stereo, 30 fps
-- **Watermark box size:** ~18% × 11% of source frame (oversized to cover
-  Grok-style logo + soft glow). Tweak in `calcWatermarkBox()`.
-- **Max files per merge:** 20 (multer config)
-- **Layouts available:** Auto, 1280×720, 720×1280, 1080×1080
+Host `frontend/dist` on any static host. Point `/api` at the Node server.
+Keep Python on `5051` (or set `PYTHON_API` on Node).
 
 ## Regenerating screenshots
 
-Frontend dev server chal raha ho (`http://localhost:5173`), to:
+Frontend must be running at `http://localhost:5173`:
 
 ```bash
 cd scripts
-npm install                       # first time only
-npx playwright install chromium   # first time only
-node make-sample-clips.js         # creates fixture videos
-node take-screenshots.js          # writes docs/screenshots/*.png
+npm install
+npx playwright install chromium
+node take-screenshots.js
 ```
 
-## Notes / Tips
+Writes `docs/screenshots/01-merge.png` … `05-downloader.png`.
 
-- Backend `uploads/` aur `output/` folders me temp files banata hai.
-  Server restart pe purani files reh sakti hain — production me ek
-  periodic cron job lagana acha rahega.
-- Long jobs ke progress in-memory tracked hai. Multi-instance deploy karna
-  ho to Redis/queue use karein.
-- **delogo limitation:** Detailed backgrounds (busy scenes) par watermark
-  ki jagah halki si blur dikh sakti hai. Solid backgrounds par result
-  near-perfect hota hai.
-# reels-maker
+## Notes
+
+- Node and Python wipe old exports on boot and reuse fixed filenames.
+- Jobs live in memory. Use a queue if you run more than one Node process.
+- Cover box is drawn by you on the preview. It is not a 4-corner-only delogo picker.
 # reels-maker
