@@ -1527,10 +1527,10 @@ async function muxSlideshowAudio(
     const vizW = evenDim(Math.max(480, Math.round(box.innerW / 2)));
     filters.push(`[1:a]asplit=2[a_out][a_freq]`);
     filters.push(
-      `[a_freq]showfreqs=s=${vizW}x${box.vizH}:mode=bar:ascale=sqrt:fscale=log:win_size=2048:overlap=0.75:averaging=1:colors=0x7DD3FC|0xFDE68A|0xFFFFFF[freq]`
+      `[a_freq]volume=4,showfreqs=s=${vizW}x${box.vizH}:mode=bar:ascale=lin:fscale=log:win_size=1024:overlap=0.4:averaging=0:colors=0x7DD3FC|0xFDE68A|0xFFFFFF[freq]`
     );
     filters.push(
-      `[freq]scale=${box.innerW}:${box.vizH}:flags=fast_bilinear,eq=saturation=1.25:contrast=1.08:brightness=0.04,colorkey=0x000000:0.12:0.28,format=yuva420p[bars]`
+      `[freq]scale=${box.innerW}:${box.vizH}:flags=fast_bilinear,eq=saturation=1.35:contrast=1.2:brightness=0.06,colorkey=0x000000:0.08:0.18,format=yuva420p[bars]`
     );
     filters.push(
       `[0:v][bars]overlay=x=${box.padX}:y=H-h-${box.gutter}:format=auto:shortest=1[${flowers ? "vbars" : "vpre"}]`
