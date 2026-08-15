@@ -1,0 +1,12 @@
+{
+  "name": "video-merge-scripts",
+  "private": true,
+  "version": "1.0.0",
+  "description": "One-off helper scripts (e.g. capturing README screenshots)",
+  "scripts": {
+    "screenshots": "node take-screenshots.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}
