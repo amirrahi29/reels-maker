@@ -72,9 +72,13 @@ function slideshowEncodeOpts({
       "yuv420p",
       "-allow_sw",
       "1",
+      "-realtime",
+      "0",
+      "-threads",
+      "0",
     ];
   }
-  return [
+  const opts = [
     "-c:v",
     "libx264",
     "-preset",
@@ -83,7 +87,10 @@ function slideshowEncodeOpts({
     String(crf),
     "-pix_fmt",
     "yuv420p",
+    "-threads",
+    "0",
   ];
+  return opts;
 }
 
 /** Run async work over items with limited parallelism. */
@@ -395,11 +402,51 @@ function orientedStillSize(meta) {
   return { width, height };
 }
 
+/** 1080p canvas that matches the photo aspect — no letterbox stretch. */
+function slideshowCanvasForAspect(srcW, srcH) {
+  const ar = srcW / Math.max(1, srcH);
+  if (Math.abs(ar - 1) < 0.06) {
+    return { width: 1080, height: 1080 };
+  }
+  if (ar > 1) {
+    let w = 1920;
+    let h = evenDim(Math.round(w / ar));
+    if (h > 1080) {
+      h = 1080;
+      w = evenDim(Math.round(h * ar));
+    }
+    return {
+      width: evenDim(Math.max(640, w)),
+      height: evenDim(Math.max(406, h)),
+    };
+  }
+  let h = 1920;
+  let w = evenDim(Math.round(h * ar));
+  if (w > 1080) {
+    w = 1080;
+    h = evenDim(Math.round(w / ar));
+  }
+  return {
+    width: evenDim(Math.max(406, w)),
+    height: evenDim(Math.max(640, h)),
+  };
+}
+
 async function resolveSlideshowLayout(layout, imagePaths) {
   if (layout !== "auto") {
     return SLIDESHOW_LAYOUT_SIZES[layout] || SLIDESHOW_LAYOUT_SIZES.landscape;
   }
   if (!imagePaths?.length) return SLIDESHOW_LAYOUT_SIZES.landscape;
+  if (imagePaths.length === 1) {
+    try {
+      const { width: sw, height: sh } = orientedStillSize(
+        await sharp(imagePaths[0]).metadata()
+      );
+      if (sw > 0 && sh > 0) return slideshowCanvasForAspect(sw, sh);
+    } catch {
+      // fall through to majority vote
+    }
+  }
 
   let portrait = 0;
   let landscape = 0;
@@ -845,26 +892,81 @@ function slideshowGutter(_width, _height) {
   return 2;
 }
 
-/** Bottom spectrum — tall enough to read, still a strip not a wall. */
+function hslToVisualizerHex(h, s, l) {
+  const hue = ((h % 360) + 360) % 360;
+  const sat = Math.min(1, Math.max(0, s));
+  const light = Math.min(1, Math.max(0, l));
+  const c = (1 - Math.abs(2 * light - 1)) * sat;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = light - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hue < 60) {
+    r = c;
+    g = x;
+  } else if (hue < 120) {
+    r = x;
+    g = c;
+  } else if (hue < 180) {
+    g = c;
+    b = x;
+  } else if (hue < 240) {
+    g = x;
+    b = c;
+  } else if (hue < 300) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+  const toHex = (v) =>
+    Math.round((v + m) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `0x${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+}
+
+/** Three vivid, spaced hues — deep enough that yuv420 does not wash to white. */
+function randomVisualizerColors() {
+  const h0 = Math.floor(Math.random() * 360);
+  const hues = [
+    h0,
+    (h0 + 38 + Math.random() * 44) % 360,
+    (h0 + 168 + Math.random() * 70) % 360,
+  ];
+  return hues
+    .map((h) =>
+        hslToVisualizerHex(
+        h,
+        0.82 + Math.random() * 0.12,
+        0.48 + Math.random() * 0.1
+      )
+    )
+    .join("|");
+}
+
+/** Bottom spectrum overlay — ~38% of the frame so bars can bounce high. */
 function slideshowVisualizerHeight(frameHeight) {
   return evenDim(
-    Math.max(96, Math.min(148, Math.round(frameHeight * 0.11)))
+    Math.max(320, Math.min(480, Math.round(frameHeight * 0.38)))
   );
 }
 
-/** Inner photo box — visualizer gets its own strip so it does not cover the image. */
+/** Inner photo box — full frame. Visualizer overlays the bottom later. */
 function slideshowInnerBox(width, height, { visualizer = true } = {}) {
   const gutter = slideshowGutter(width, height);
   const vizH = visualizer ? slideshowVisualizerHeight(height) : 0;
   const innerW = evenDim(width - gutter * 2);
-  const innerH = evenDim(height - gutter * 2 - vizH);
+  const innerH = evenDim(height - gutter * 2);
   return {
     gutter,
     vizH,
     gap: 0,
     padX: gutter,
     padTop: gutter,
-    padBottom: gutter + vizH,
+    padBottom: gutter,
     innerW,
     innerH: Math.max(2, innerH),
   };
@@ -926,25 +1028,20 @@ async function prepareFramedStill(
     ])
     .toBuffer();
 
-  const meta = await sharp(imagePath).rotate().metadata();
-  const srcW = Number(meta.width) || innerW;
-  const srcH = Number(meta.height) || innerH;
-  const scale = Math.min(innerW / srcW, innerH / srcH);
-  let dw = evenDim(Math.max(2, Math.round(srcW * scale)));
-  let dh = evenDim(Math.max(2, Math.round(srcH * scale)));
-  if (dw > innerW) dw = evenDim(innerW);
-  if (dh > innerH) dh = evenDim(innerH);
-
   const photo = await sharp(imagePath)
     .rotate()
     .resize({
-      width: dw,
-      height: dh,
-      fit: "fill",
+      width: innerW,
+      height: innerH,
+      fit: "inside",
       kernel: sharp.kernel.lanczos3,
     })
     .jpeg({ quality: 94, mozjpeg: true })
     .toBuffer();
+
+  const fitted = await sharp(photo).metadata();
+  const dw = evenDim(Number(fitted.width) || innerW);
+  const dh = evenDim(Number(fitted.height) || innerH);
 
   const left = padX + Math.round((innerW - dw) / 2);
   const top = padTop + Math.round((innerH - dh) / 2);
@@ -962,7 +1059,7 @@ function buildStaticSlideFilterGraph(width, height) {
   // Still was already cover-fitted by sharp (square pixels). Do not let
   // ffmpeg re-interpret JFIF density / SAR — that stretches faces.
   return [
-    `[0:v]scale=${width}:${height}:flags=bilinear,setsar=1,setdar=${width}/${height},eq=contrast=1.04:saturation=1.05,fps=${SLIDESHOW_FPS}[vout]`,
+    `[0:v]setsar=1,scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setdar=${width}/${height},fps=${SLIDESHOW_FPS}[vout]`,
   ].join(";");
 }
 
@@ -1035,6 +1132,8 @@ async function renderImageClip(
           String(frames),
           "-an",
           ...slideshowEncodeOpts({ bitrate: "8M", crf: 22, mode: "clip" }),
+          "-tune",
+          "stillimage",
           "-aspect",
           `${width}:${height}`,
           "-r",
@@ -1383,24 +1482,23 @@ async function ensurePetalPngs() {
  * rain looks continuous and never syncs into a grid.
  */
 function buildFlowerRainSpecks(width, height, assetCount) {
-  const perAsset = 3;
+  const perAsset = 4;
   const specks = [];
   for (let a = 0; a < assetCount; a++) {
     for (let k = 0; k < perAsset; k++) {
       const i = a * perAsset + k;
       const far = i % 3 === 0;
-      const size = far ? 22 + ((i * 7) % 14) : 32 + ((i * 11) % 26);
+      const size = far ? 22 + ((i * 7) % 14) : 34 + ((i * 11) % 22);
       specks.push({
         asset: a,
         size,
-        x0: Math.round(((i * 0.181 + a * 0.09) % 1) * width) - Math.round(size / 2),
+        x0: Math.round(((i * 0.173 + a * 0.07) % 1) * width) - Math.round(size / 2),
         speed: Math.round(height * (far ? 0.038 + (i % 5) * 0.008 : 0.05 + (i % 6) * 0.01)),
-        sway: 22 + (i * 11) % 34,
-        period: (2.8 + (i % 5) * 0.7).toFixed(2),
-        spin: ((i % 2 === 0 ? 1 : -1) * (0.12 + (i % 6) * 0.06)).toFixed(2),
-        delay: Math.round((i * 113 + a * 53) % (height + 60)),
-        phase: (i * 0.81).toFixed(2),
-        alpha: far ? (0.38 + (i % 3) * 0.06).toFixed(2) : (0.58 + (i % 4) * 0.06).toFixed(2),
+        sway: 20 + (i * 11) % 32,
+        period: (2.5 + (i % 5) * 0.65).toFixed(2),
+        delay: Math.round((i * 97 + a * 53) % (height + 80)),
+        phase: (i * 0.73).toFixed(2),
+        alpha: far ? (0.4 + (i % 3) * 0.07).toFixed(2) : (0.58 + (i % 4) * 0.07).toFixed(2),
       });
     }
   }
@@ -1425,7 +1523,7 @@ function buildFlowerRainFilters(baseLabel, specks, petalInputOffset, height, out
     group.forEach((s, k) => {
       const pl = `fp${asset}_${k}`;
       filters.push(
-        `[${splitPads[k]}]format=rgba,scale=${s.size}:${s.size}:flags=bilinear,colorchannelmixer=aa=${s.alpha},rotate=angle='${s.spin}*t+${s.phase}':c=none:ow='hypot(iw,ih)':oh='hypot(iw,ih)'[${pl}]`
+        `[${splitPads[k]}]format=rgba,scale=${s.size}:${s.size}:flags=fast_bilinear,colorchannelmixer=aa=${s.alpha}[${pl}]`
       );
       particles.push({ ...s, pl });
     });
@@ -1437,7 +1535,7 @@ function buildFlowerRainFilters(baseLabel, specks, petalInputOffset, height, out
     const xExpr = `${p.x0}+${p.sway}*sin(2*PI*t/${p.period}+${p.phase})`;
     const yExpr = `mod(${p.speed}*t+${p.delay},${height}+h)-h`;
     filters.push(
-      `[${cur}][${p.pl}]overlay=x='${xExpr}':y='${yExpr}':format=auto[${next}]`
+      `[${cur}][${p.pl}]overlay=x='${xExpr}':y='${yExpr}'[${next}]`
     );
     cur = next;
   });
@@ -1524,16 +1622,30 @@ async function muxSlideshowAudio(
 
   if (visualizer) {
     const box = slideshowInnerBox(width, height, { visualizer: true });
-    const vizW = evenDim(Math.max(480, Math.round(box.innerW / 2)));
-    filters.push(`[1:a]asplit=2[a_out][a_freq]`);
+    const dockW = evenDim(width);
+    const dockH = box.vizH;
+    filters.push(`[1:a]asplit=2[a_out][a_raw]`);
+    // Log spectrum packs bass on the left — render half width, then mirror
+    // so bars bounce across the full frame (not only the left side).
+    const halfW = evenDim(Math.max(320, Math.round(dockW / 2)));
+    const colors = randomVisualizerColors();
     filters.push(
-      `[a_freq]volume=4,showfreqs=s=${vizW}x${box.vizH}:mode=bar:ascale=lin:fscale=log:win_size=1024:overlap=0.4:averaging=0:colors=0x7DD3FC|0xFDE68A|0xFFFFFF[freq]`
+      `color=c=black@0.32:s=${dockW}x${dockH}:r=${SLIDESHOW_FPS},format=yuva420p[grad]`
     );
     filters.push(
-      `[freq]scale=${box.innerW}:${box.vizH}:flags=fast_bilinear,eq=saturation=1.35:contrast=1.2:brightness=0.06,colorkey=0x000000:0.08:0.18,format=yuva420p[bars]`
+      `[a_raw]aformat=channel_layouts=mono,volume=1.85,showfreqs=s=${halfW}x${dockH}:mode=bar:ascale=sqrt:fscale=log:win_size=2048:overlap=0.92:averaging=1:colors=${colors}[freq]`
     );
     filters.push(
-      `[0:v][bars]overlay=x=${box.padX}:y=H-h-${box.gutter}:format=auto:shortest=1[${flowers ? "vbars" : "vpre"}]`
+      `[freq]split[fl][fr];[fr]hflip[frf];[fl][frf]hstack=inputs=2[freqm]`
+    );
+    filters.push(
+      `[freqm]scale=${dockW}:${dockH}:flags=fast_bilinear,colorkey=0x000000:0.08:0.2,format=yuva420p[bars]`
+    );
+    filters.push(
+      `[0:v][grad]overlay=x=0:y=H-h[vfade]`
+    );
+    filters.push(
+      `[vfade][bars]overlay=x=0:y=H-h:shortest=1[${flowers ? "vbars" : "vpre"}]`
     );
     vLabel = flowers ? "vbars" : "vpre";
     audioMap = "[a_out]";

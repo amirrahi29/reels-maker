@@ -367,7 +367,7 @@ const LAYOUTS = [
 ];
 
 const MUSIC_LAYOUTS = LAYOUTS.map((l) => {
-  if (l.id === "auto") return { ...l, hint: "Best fit · 1080p" };
+  if (l.id === "auto") return { ...l, hint: "Photo ratio · 1080p" };
   if (l.id === "landscape") return { ...l, hint: "1920×1080" };
   if (l.id === "portrait") return { ...l, hint: "1080×1920" };
   if (l.id === "square") return { ...l, hint: "1080×1080" };
@@ -2405,7 +2405,7 @@ function MusicTab() {
               <span className="setting-label">Audio visualizer</span>
               <span className="setting-desc">
                 Full thumbnail fits the frame — nothing is cropped.
-                Spectrum bar sits below the image.
+                Tall smooth spectrum bars overlay the bottom of the photo.
               </span>
             </div>
             <div className="setting-control">
@@ -2454,8 +2454,8 @@ function MusicTab() {
             <div className="setting-main">
               <span className="setting-label">Output format</span>
               <span className="setting-desc">
-                Canvas size. Auto picks best fit. Photos fill the frame
-                (2px edge) and loop with the song.
+                Canvas size. Auto matches the photo ratio so nothing
+                stretches. Photos fit inside the frame and loop with the song.
               </span>
             </div>
             <div className="layout-grid" role="radiogroup" aria-label="Output layout">
