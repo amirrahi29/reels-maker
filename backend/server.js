@@ -996,10 +996,10 @@ async function prepareFramedStill(
   }
 
   const wash = {
-    r: Math.min(255, Math.round(dominant.r * 0.72 + 28)),
-    g: Math.min(255, Math.round(dominant.g * 0.72 + 22)),
-    b: Math.min(255, Math.round(dominant.b * 0.72 + 18)),
-    alpha: 70,
+    r: Math.min(255, Math.round(dominant.r * 0.55 + 16)),
+    g: Math.min(255, Math.round(dominant.g * 0.55 + 12)),
+    b: Math.min(255, Math.round(dominant.b * 0.55 + 10)),
+    alpha: 88,
   };
 
   const blurW = evenDim(Math.max(160, Math.round(width / 4)));
@@ -1008,7 +1008,7 @@ async function prepareFramedStill(
     .rotate()
     .resize(blurW, blurH, { fit: "cover", position: "centre" })
     .blur(22)
-    .modulate({ brightness: 0.92, saturation: 1.35 })
+    .modulate({ brightness: 0.7, saturation: 1.18 })
     .toBuffer();
 
   const background = await sharp(blurredSmall)
@@ -1036,6 +1036,9 @@ async function prepareFramedStill(
       fit: "inside",
       kernel: sharp.kernel.lanczos3,
     })
+    .sharpen({ sigma: 0.85, m1: 0.7, m2: 0.35 })
+    .modulate({ brightness: 1.06, saturation: 1.12 })
+    .linear(1.08, -10)
     .jpeg({ quality: 94, mozjpeg: true })
     .toBuffer();
 
@@ -1046,8 +1049,27 @@ async function prepareFramedStill(
   const left = padX + Math.round((innerW - dw) / 2);
   const top = padTop + Math.round((innerH - dh) / 2);
 
+  const vignette = await sharp(
+    Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+        <defs>
+          <radialGradient id="v" cx="50%" cy="40%" r="70%">
+            <stop offset="38%" stop-color="#000" stop-opacity="0"/>
+            <stop offset="100%" stop-color="#000" stop-opacity="0.4"/>
+          </radialGradient>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#v)"/>
+      </svg>`
+    )
+  )
+    .png()
+    .toBuffer();
+
   await sharp(background)
-    .composite([{ input: photo, left, top }])
+    .composite([
+      { input: photo, left, top },
+      { input: vignette, blend: "over" },
+    ])
     .jpeg({ quality: 93, mozjpeg: true })
     .toFile(outPath);
 }
@@ -1337,120 +1359,167 @@ function runFfmpegSave(buildCmd) {
 }
 
 const PETAL_ASSETS_DIR = path.join(__dirname, "assets", "petals");
-const PETAL_CACHE_VER = "v4";
+const PETAL_CACHE_VER = "v7";
 
-/** Lit rose / blossom sprites — highlight + shade so they read as real petals. */
+function bloomFlowerSvg({ name, petals, rx, ry, offset = 0, layers = 1, petalStops, center, heart }) {
+  const groups = [];
+  for (let layer = 0; layer < layers; layer++) {
+    const scale = 1 - layer * 0.22;
+    const spin = offset + layer * (180 / petals);
+    const bits = [];
+    for (let i = 0; i < petals; i++) {
+      const deg = spin + (360 / petals) * i;
+      bits.push(
+        `<ellipse cx="0" cy="${(-ry * 0.7 * scale).toFixed(1)}" rx="${(rx * scale).toFixed(1)}" ry="${(ry * scale).toFixed(1)}" fill="url(#${name}-p)" transform="rotate(${deg.toFixed(1)})"/>`
+      );
+    }
+    groups.push(`<g>${bits.join("")}</g>`);
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+    <defs>
+      <radialGradient id="${name}-p" cx="50%" cy="18%" r="78%">${petalStops}</radialGradient>
+      <radialGradient id="${name}-c" cx="50%" cy="50%" r="50%">${center}</radialGradient>
+    </defs>
+    <g transform="translate(64 64)">${groups.join("")}<circle r="${heart}" fill="url(#${name}-c)"/></g>
+  </svg>`;
+}
+
+function driftPetalSvg(name, rot, stops) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="128" viewBox="0 0 96 128">
+    <defs>
+      <linearGradient id="${name}-g" x1="0.2" y1="0" x2="0.9" y2="1">${stops}</linearGradient>
+      <radialGradient id="${name}-h" cx="30%" cy="16%" r="55%">
+        <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.75"/>
+        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <g transform="translate(48 64) rotate(${rot}) translate(-48 -64)">
+      <path d="M48 6C58 20 72 48 68 82C64 108 54 124 48 126C42 124 32 108 28 82C24 48 38 20 48 6Z" fill="url(#${name}-g)"/>
+      <path d="M48 6C58 20 72 48 68 82C64 108 54 124 48 126C42 124 32 108 28 82C24 48 38 20 48 6Z" fill="url(#${name}-h)"/>
+    </g>
+  </svg>`;
+}
+
+function butterflySvg(name, wing, wing2, body) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="96" viewBox="0 0 128 96">
+    <defs>
+      <radialGradient id="${name}-w" cx="35%" cy="35%" r="70%">
+        <stop offset="0%" stop-color="${wing}"/>
+        <stop offset="70%" stop-color="${wing2}"/>
+        <stop offset="100%" stop-color="#3f1d0a"/>
+      </radialGradient>
+    </defs>
+    <g transform="translate(64 48)">
+      <ellipse cx="-26" cy="-10" rx="30" ry="18" fill="url(#${name}-w)" transform="rotate(-18)"/>
+      <ellipse cx="26" cy="-10" rx="30" ry="18" fill="url(#${name}-w)" transform="rotate(18)"/>
+      <ellipse cx="-22" cy="14" rx="20" ry="13" fill="url(#${name}-w)" transform="rotate(22)"/>
+      <ellipse cx="22" cy="14" rx="20" ry="13" fill="url(#${name}-w)" transform="rotate(-22)"/>
+      <ellipse cx="0" cy="2" rx="4.5" ry="20" fill="${body}"/>
+      <circle cx="0" cy="-18" r="3.2" fill="${body}"/>
+      <path d="M-2 -20C-10 -32 -16 -34 -18 -30" fill="none" stroke="${body}" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M2 -20C10 -32 16 -34 18 -30" fill="none" stroke="${body}" stroke-width="1.6" stroke-linecap="round"/>
+    </g>
+  </svg>`;
+}
+
+/** Blooms + drifting petals + butterflies for the rain overlay. */
 function petalSvgMarkup() {
   return [
     {
-      name: "petal-blush",
-      svg: `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="128" viewBox="0 0 96 128">
-        <defs>
-          <linearGradient id="b1" x1="0.18" y1="0.04" x2="0.88" y2="1">
-            <stop offset="0%" stop-color="#FFF6F8"/>
-            <stop offset="32%" stop-color="#FFB3C7"/>
-            <stop offset="68%" stop-color="#E11D74"/>
-            <stop offset="100%" stop-color="#701A3A"/>
-          </linearGradient>
-          <radialGradient id="h1" cx="30%" cy="20%" r="48%">
-            <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.78"/>
-            <stop offset="42%" stop-color="#FFFFFF" stop-opacity="0.16"/>
-            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-          </radialGradient>
-          <linearGradient id="s1" x1="0.85" y1="0.1" x2="0.15" y2="1">
-            <stop offset="0%" stop-color="#000" stop-opacity="0"/>
-            <stop offset="100%" stop-color="#3F0A1C" stop-opacity="0.38"/>
-          </linearGradient>
-        </defs>
-        <path d="M48 5C75 11 92 38 90 72C88 104 68 124 48 126C28 124 8 104 6 72C4 38 21 11 48 5Z" fill="url(#b1)"/>
-        <path d="M48 5C75 11 92 38 90 72C88 104 68 124 48 126C28 124 8 104 6 72C4 38 21 11 48 5Z" fill="url(#h1)"/>
-        <path d="M48 5C75 11 92 38 90 72C88 104 68 124 48 126C28 124 8 104 6 72C4 38 21 11 48 5Z" fill="url(#s1)"/>
-        <path d="M48 18C52 54 52 90 48 116" fill="none" stroke="#ffffff66" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>`,
+      name: "bloom-rose",
+      kind: "bloom",
+      svg: bloomFlowerSvg({
+        name: "bloom-rose",
+        petals: 7,
+        rx: 13,
+        ry: 28,
+        offset: -8,
+        layers: 2,
+        petalStops: `<stop offset="0%" stop-color="#FFF5F7"/><stop offset="40%" stop-color="#FB7185"/><stop offset="100%" stop-color="#9F1239"/>`,
+        center: `<stop offset="0%" stop-color="#FEF3C7"/><stop offset="100%" stop-color="#D97706"/>`,
+        heart: 9,
+      }),
     },
     {
-      name: "petal-rose",
-      svg: `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="128" viewBox="0 0 96 128">
-        <defs>
-          <linearGradient id="b2" x1="0.2" y1="0" x2="0.9" y2="1">
-            <stop offset="0%" stop-color="#FFE4EC"/>
-            <stop offset="40%" stop-color="#FB7185"/>
-            <stop offset="100%" stop-color="#9F1239"/>
-          </linearGradient>
-          <radialGradient id="h2" cx="34%" cy="24%" r="46%">
-            <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.7"/>
-            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <path d="M48 8C72 10 90 40 88 72C86 102 68 123 48 125C28 123 10 102 8 72C6 40 24 10 48 8Z" fill="url(#b2)"/>
-        <path d="M48 8C72 10 90 40 88 72C86 102 68 123 48 125C28 123 10 102 8 72C6 40 24 10 48 8Z" fill="url(#h2)"/>
-        <path d="M48 22C51 56 51 88 48 114" fill="none" stroke="#ffffff55" stroke-width="1.4"/>
-      </svg>`,
+      name: "bloom-blush",
+      kind: "bloom",
+      svg: bloomFlowerSvg({
+        name: "bloom-blush",
+        petals: 6,
+        rx: 14,
+        ry: 27,
+        offset: 12,
+        layers: 2,
+        petalStops: `<stop offset="0%" stop-color="#FFFFFF"/><stop offset="45%" stop-color="#F9A8D4"/><stop offset="100%" stop-color="#BE185D"/>`,
+        center: `<stop offset="0%" stop-color="#FEF9C3"/><stop offset="100%" stop-color="#CA8A04"/>`,
+        heart: 8,
+      }),
+    },
+    {
+      name: "bloom-marigold",
+      kind: "bloom",
+      svg: bloomFlowerSvg({
+        name: "bloom-marigold",
+        petals: 14,
+        rx: 7,
+        ry: 26,
+        offset: 4,
+        layers: 2,
+        petalStops: `<stop offset="0%" stop-color="#FFFBEB"/><stop offset="45%" stop-color="#FBBF24"/><stop offset="100%" stop-color="#C2410C"/>`,
+        center: `<stop offset="0%" stop-color="#FDE68A"/><stop offset="100%" stop-color="#B45309"/>`,
+        heart: 10,
+      }),
+    },
+    {
+      name: "petal-pink",
+      kind: "petal",
+      svg: driftPetalSvg(
+        "petal-pink",
+        -28,
+        `<stop offset="0%" stop-color="#FFF5F7"/><stop offset="40%" stop-color="#F9A8D4"/><stop offset="100%" stop-color="#BE185D"/>`
+      ),
+    },
+    {
+      name: "petal-blush",
+      kind: "petal",
+      svg: driftPetalSvg(
+        "petal-blush",
+        18,
+        `<stop offset="0%" stop-color="#FFFFFF"/><stop offset="45%" stop-color="#FB7185"/><stop offset="100%" stop-color="#9F1239"/>`
+      ),
     },
     {
       name: "petal-ivory",
-      svg: `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="128" viewBox="0 0 96 128">
-        <defs>
-          <linearGradient id="b3" x1="0.2" y1="0.05" x2="0.85" y2="1">
-            <stop offset="0%" stop-color="#FFFFFF"/>
-            <stop offset="45%" stop-color="#F4E6D0"/>
-            <stop offset="100%" stop-color="#C4A484"/>
-          </linearGradient>
-          <radialGradient id="h3" cx="28%" cy="18%" r="50%">
-            <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.85"/>
-            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <path d="M48 7C73 12 90 40 88 73C86 104 67 124 48 125C29 124 10 104 8 73C6 40 23 12 48 7Z" fill="url(#b3)"/>
-        <path d="M48 7C73 12 90 40 88 73C86 104 67 124 48 125C29 124 10 104 8 73C6 40 23 12 48 7Z" fill="url(#h3)"/>
-      </svg>`,
-    },
-    {
-      name: "blossom-soft",
-      svg: `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-        <defs>
-          <radialGradient id="bp" cx="50%" cy="28%" r="72%">
-            <stop offset="0%" stop-color="#FFF7FB"/>
-            <stop offset="48%" stop-color="#FFB0C8"/>
-            <stop offset="100%" stop-color="#BE185D"/>
-          </radialGradient>
-          <radialGradient id="bc" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stop-color="#FFF3B0"/>
-            <stop offset="100%" stop-color="#D97706"/>
-          </radialGradient>
-          <radialGradient id="bh" cx="36%" cy="32%" r="40%">
-            <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.55"/>
-            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <g transform="translate(64 64)">
-          <g transform="rotate(0)"><ellipse cx="0" cy="-21" rx="14" ry="28" fill="url(#bp)"/></g>
-          <g transform="rotate(72)"><ellipse cx="0" cy="-21" rx="14" ry="28" fill="url(#bp)"/></g>
-          <g transform="rotate(144)"><ellipse cx="0" cy="-21" rx="14" ry="28" fill="url(#bp)"/></g>
-          <g transform="rotate(216)"><ellipse cx="0" cy="-21" rx="14" ry="28" fill="url(#bp)"/></g>
-          <g transform="rotate(288)"><ellipse cx="0" cy="-21" rx="14" ry="28" fill="url(#bp)"/></g>
-          <circle r="11" fill="url(#bc)"/>
-          <circle r="36" fill="url(#bh)"/>
-        </g>
-      </svg>`,
+      kind: "petal",
+      svg: driftPetalSvg(
+        "petal-ivory",
+        42,
+        `<stop offset="0%" stop-color="#FFFFFF"/><stop offset="50%" stop-color="#F5E6C8"/><stop offset="100%" stop-color="#B45309"/>`
+      ),
     },
     {
       name: "petal-gold",
-      svg: `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="128" viewBox="0 0 96 128">
-        <defs>
-          <linearGradient id="b5" x1="0.15" y1="0" x2="0.9" y2="1">
-            <stop offset="0%" stop-color="#FFFBEB"/>
-            <stop offset="40%" stop-color="#FBBF24"/>
-            <stop offset="100%" stop-color="#B45309"/>
-          </linearGradient>
-          <radialGradient id="h5" cx="30%" cy="18%" r="48%">
-            <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.72"/>
-            <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <path d="M48 6C74 10 91 38 89 72C87 103 68 124 48 126C28 124 9 103 7 72C5 38 22 10 48 6Z" fill="url(#b5)"/>
-        <path d="M48 6C74 10 91 38 89 72C87 103 68 124 48 126C28 124 9 103 7 72C5 38 22 10 48 6Z" fill="url(#h5)"/>
-      </svg>`,
+      kind: "petal",
+      svg: driftPetalSvg(
+        "petal-gold",
+        -50,
+        `<stop offset="0%" stop-color="#FFFBEB"/><stop offset="40%" stop-color="#FBBF24"/><stop offset="100%" stop-color="#C2410C"/>`
+      ),
+    },
+    {
+      name: "bfly-gold",
+      kind: "butterfly",
+      svg: butterflySvg("bfly-gold", "#FDE68A", "#F59E0B", "#1c1917"),
+    },
+    {
+      name: "bfly-rose",
+      kind: "butterfly",
+      svg: butterflySvg("bfly-rose", "#FECDD3", "#E11D48", "#1c1917"),
+    },
+    {
+      name: "bfly-cream",
+      kind: "butterfly",
+      svg: butterflySvg("bfly-cream", "#FFF7ED", "#D6B48A", "#292524"),
     },
   ];
 }
@@ -1468,44 +1537,76 @@ async function ensurePetalPngs() {
     );
     if (!fs.existsSync(out)) {
       await sharp(Buffer.from(asset.svg))
-        .resize(128, 128, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .resize(128, 128, {
+          fit: "contain",
+          background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
         .png()
         .toFile(out);
     }
     paths.push(out);
   }
-  return paths;
+  return { paths, kinds: assets.map((a) => a.kind) };
 }
 
 /**
- * Deterministic falling-flower layout: mixed sizes, speeds and sway so the
- * rain looks continuous and never syncs into a grid.
+ * Mix of open blooms, wind-drift petals, and crossing butterflies.
  */
-function buildFlowerRainSpecks(width, height, assetCount) {
-  const perAsset = 4;
+function buildFlowerRainSpecks(width, height, kinds) {
   const specks = [];
-  for (let a = 0; a < assetCount; a++) {
-    for (let k = 0; k < perAsset; k++) {
-      const i = a * perAsset + k;
+  kinds.forEach((kind, a) => {
+    const n = kind === "butterfly" ? 3 : kind === "petal" ? 5 : 3;
+    for (let k = 0; k < n; k++) {
+      const i = a * 7 + k;
       const far = i % 3 === 0;
-      const size = far ? 22 + ((i * 7) % 14) : 34 + ((i * 11) % 22);
+      let pw;
+      let ph;
+      if (kind === "petal") {
+        ph = evenDim(far ? 28 + ((i * 6) % 18) : 48 + ((i * 8) % 36));
+        pw = evenDim(Math.max(12, Math.round(ph * 0.46)));
+      } else if (kind === "butterfly") {
+        const size = evenDim(38 + ((i * 7) % 18));
+        pw = size;
+        ph = evenDim(Math.round(size * 0.72));
+      } else {
+        const size = evenDim(far ? 32 + ((i * 5) % 12) : 48 + ((i * 9) % 18));
+        pw = size;
+        ph = size;
+      }
+      const dir = i % 2 === 0 ? 1 : -1;
       specks.push({
         asset: a,
-        size,
-        x0: Math.round(((i * 0.173 + a * 0.07) % 1) * width) - Math.round(size / 2),
-        speed: Math.round(height * (far ? 0.038 + (i % 5) * 0.008 : 0.05 + (i % 6) * 0.01)),
-        sway: 20 + (i * 11) % 32,
-        period: (2.5 + (i % 5) * 0.65).toFixed(2),
-        delay: Math.round((i * 97 + a * 53) % (height + 80)),
-        phase: (i * 0.73).toFixed(2),
-        alpha: far ? (0.4 + (i % 3) * 0.07).toFixed(2) : (0.58 + (i % 4) * 0.07).toFixed(2),
+        kind,
+        pw,
+        ph,
+        x0: Math.round(((i * 0.141 + a * 0.06) % 1) * width) - Math.round(pw / 2),
+        speed: Math.round(
+          kind === "butterfly"
+            ? width * (0.028 + (i % 4) * 0.008) * dir
+            : height * (far ? 0.026 + (i % 5) * 0.006 : 0.038 + (i % 6) * 0.008)
+        ),
+        sway: kind === "petal" ? 48 + (i * 13) % 50 : 16 + (i * 11) % 28,
+        bob: kind === "butterfly" ? 28 + (i % 5) * 10 : 0,
+        yBase:
+          kind === "butterfly"
+            ? Math.round(height * (0.18 + ((i * 0.17) % 0.55)))
+            : 0,
+        period: ((kind === "petal" ? 3.1 : 2.3) + (i % 5) * 0.55).toFixed(2),
+        delay: Math.round((i * 89 + a * 47) % (height + 90)),
+        phase: (i * 0.67).toFixed(2),
+        alpha:
+          kind === "butterfly"
+            ? (0.78 + (i % 3) * 0.06).toFixed(2)
+            : far
+              ? (0.4 + (i % 3) * 0.08).toFixed(2)
+              : (0.66 + (i % 4) * 0.07).toFixed(2),
       });
     }
-  }
+  });
   return specks;
 }
 
-function buildFlowerRainFilters(baseLabel, specks, petalInputOffset, height, outLabel = "vout") {
+function buildFlowerRainFilters(baseLabel, specks, petalInputOffset, width, height, outLabel = "vout") {
   const filters = [];
   const byAsset = new Map();
   for (const s of specks) {
@@ -1523,7 +1624,7 @@ function buildFlowerRainFilters(baseLabel, specks, petalInputOffset, height, out
     group.forEach((s, k) => {
       const pl = `fp${asset}_${k}`;
       filters.push(
-        `[${splitPads[k]}]format=rgba,scale=${s.size}:${s.size}:flags=fast_bilinear,colorchannelmixer=aa=${s.alpha}[${pl}]`
+        `[${splitPads[k]}]format=rgba,scale=${s.pw}:${s.ph}:flags=fast_bilinear,colorchannelmixer=aa=${s.alpha}[${pl}]`
       );
       particles.push({ ...s, pl });
     });
@@ -1532,8 +1633,15 @@ function buildFlowerRainFilters(baseLabel, specks, petalInputOffset, height, out
   let cur = baseLabel;
   particles.forEach((p, i) => {
     const next = i === particles.length - 1 ? outLabel : `fl${i}`;
-    const xExpr = `${p.x0}+${p.sway}*sin(2*PI*t/${p.period}+${p.phase})`;
-    const yExpr = `mod(${p.speed}*t+${p.delay},${height}+h)-h`;
+    let xExpr;
+    let yExpr;
+    if (p.kind === "butterfly") {
+      xExpr = `mod(${p.x0}+${p.speed}*t,${width}+w)-w`;
+      yExpr = `${p.yBase}+${p.bob}*sin(2*PI*t/${p.period}+${p.phase})`;
+    } else {
+      xExpr = `${p.x0}+${p.sway}*sin(2*PI*t/${p.period}+${p.phase})`;
+      yExpr = `mod(${p.speed}*t+${p.delay},${height}+h)-h`;
+    }
     filters.push(
       `[${cur}][${p.pl}]overlay=x='${xExpr}':y='${yExpr}'[${next}]`
     );
@@ -1611,9 +1719,10 @@ async function muxSlideshowAudio(
     return outputPath;
   }
 
-  const petalPngs = flowers ? await ensurePetalPngs() : [];
+  const overlay = flowers ? await ensurePetalPngs() : { paths: [], kinds: [] };
+  const petalPngs = overlay.paths;
   const specks = flowers
-    ? buildFlowerRainSpecks(width, height, petalPngs.length)
+    ? buildFlowerRainSpecks(width, height, overlay.kinds)
     : [];
 
   const filters = [];
@@ -1625,18 +1734,22 @@ async function muxSlideshowAudio(
     const dockW = evenDim(width);
     const dockH = box.vizH;
     filters.push(`[1:a]asplit=2[a_out][a_raw]`);
-    // Log spectrum packs bass on the left — render half width, then mirror
-    // so bars bounce across the full frame (not only the left side).
-    const halfW = evenDim(Math.max(320, Math.round(dockW / 2)));
+    // Full-width log spectrum, keep only live bass/mids (left half), then
+    // mirror so left, center, and right all bounce. Half-width render was
+    // packing dead treble into the middle.
+    const liveW = evenDim(Math.max(320, Math.round(dockW / 2)));
     const colors = randomVisualizerColors();
     filters.push(
-      `color=c=black@0.32:s=${dockW}x${dockH}:r=${SLIDESHOW_FPS},format=yuva420p[grad]`
+      `color=c=black@0.22:s=${dockW}x${dockH}:r=${SLIDESHOW_FPS},format=yuva420p[grad]`
     );
     filters.push(
-      `[a_raw]aformat=channel_layouts=mono,volume=1.85,showfreqs=s=${halfW}x${dockH}:mode=bar:ascale=sqrt:fscale=log:win_size=2048:overlap=0.92:averaging=1:colors=${colors}[freq]`
+      `[a_raw]aformat=channel_layouts=mono,volume=1.9,showfreqs=s=${dockW}x${dockH}:mode=bar:ascale=sqrt:fscale=log:win_size=2048:overlap=0.92:averaging=1:colors=${colors}[freq]`
     );
     filters.push(
-      `[freq]split[fl][fr];[fr]hflip[frf];[fl][frf]hstack=inputs=2[freqm]`
+      `[freq]crop=${liveW}:${dockH}:0:0[live]`
+    );
+    filters.push(
+      `[live]split[fl][fr];[fr]hflip[frf];[fl][frf]hstack=inputs=2[freqm]`
     );
     filters.push(
       `[freqm]scale=${dockW}:${dockH}:flags=fast_bilinear,colorkey=0x000000:0.08:0.2,format=yuva420p[bars]`
@@ -1653,12 +1766,12 @@ async function muxSlideshowAudio(
 
   if (flowers) {
     filters.push(
-      ...buildFlowerRainFilters(vLabel, specks, 2, height, "vpre")
+      ...buildFlowerRainFilters(vLabel, specks, 2, width, height, "vpre")
     );
   }
 
   filters.push(
-    `[vpre]setsar=1,setdar=${width}/${height},format=yuv420p[vout]`
+    `[vpre]eq=contrast=1.07:saturation=1.1:gamma=0.97:brightness=0.02,colorbalance=rs=0.05:gs=0.015:bs=-0.04,setsar=1,setdar=${width}/${height},format=yuv420p[vout]`
   );
 
   const stage = flowers

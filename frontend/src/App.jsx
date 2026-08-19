@@ -2429,8 +2429,8 @@ function MusicTab() {
             <div className="setting-main">
               <span className="setting-label">Falling flowers</span>
               <span className="setting-desc">
-                Soft lit rose and marigold rain — light, depth, and glow
-                over the framed photo.
+                Drifting petals, open blossoms, and butterflies crossing
+                the frame — like a cinematic music video.
               </span>
             </div>
             <div className="setting-control">
